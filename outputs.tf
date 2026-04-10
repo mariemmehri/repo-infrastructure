@@ -20,7 +20,7 @@ output "kubectl_command" {
 
 # Commande pour accéder à l'UI ArgoCD via port-forward
 output "argocd_portforward_command" {
-  description = "Commande pour accéder à l'UI ArgoCD (http://localhost:9090)"
+  description = "Commande pour accéder à l'UI ArgoCD (https://localhost:9089)"
   value       = "kubectl port-forward svc/argocd-server -n argocd 9089:80"
 }
 
