@@ -1,12 +1,11 @@
 terraform {
   # ─── Backend distant : stocke le tfstate dans Azure Blob Storage ───────────
   # Remplace ces valeurs par les tiennes AVANT de faire terraform init
-  backend "azurerm" {
-    resource_group_name  = "rg-todo-app"
-    storage_account_name = "acrtodosopra"   # ← ton storage account réel
-    container_name       = "tfstate"
-    key                  = "todo-app.tfstate"
-  }
+  
+
+
+
+
 
   required_providers {
     # azurerm → parle à l'API Azure (AKS, ACR, etc.)

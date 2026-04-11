@@ -1,9 +1,12 @@
 # =============================================================================
-# ARGOCD — Installation + bootstrap GitOps sur AKS
+# PHASE A — Installation ArgoCD sur AKS
 #
-# Ce fichier:
-# 1) installe ArgoCD via Helm
-# 2) crée l'Application racine (App-of-Apps) pour démarrer GitOps automatiquement
+# Cette stack gere uniquement l'infrastructure ArgoCD (namespace + helm chart).
+# Le bootstrap GitOps (Application apps-root) est volontairement deplace
+# dans une stack separee: terraform-bootstrap-gitops.
+#
+# Pourquoi: eviter la course sur le CRD Application (
+# argoproj.io/v1alpha1) qui peut ne pas etre pret immediatement apres Helm.
 # =============================================================================
 
 # ─── Namespace ArgoCD ─────────────────────────────────────────────────────────
@@ -45,45 +48,4 @@ resource "helm_release" "argocd" {
 
   # ArgoCD prend du temps à démarrer (pods nombreux)
   timeout = 600
-}
-
-# ─── Bootstrap GitOps : Application racine ArgoCD ───────────────────────────
-# Objectif : après `terraform apply`, ArgoCD commence automatiquement à
-# synchroniser le repo de configuration sans action manuelle `kubectl apply`.
-resource "kubernetes_manifest" "argocd_root_app" {
-  manifest = {
-    apiVersion = "argoproj.io/v1alpha1"
-    kind       = "Application"
-    metadata = {
-      name      = "apps-root"
-      namespace = "argocd"
-    }
-    spec = {
-      project = "default"
-      source = {
-        repoURL        = "https://github.com/mariemmehri/repo-config"
-        targetRevision = "main"
-        # On cible un sous-dossier dédié aux apps enfants pour éviter
-        # l'auto-référence de l'Application racine.
-        path = "apps/children"
-        directory = {
-          recurse = true
-        }
-      }
-      destination = {
-        server    = "https://kubernetes.default.svc"
-        namespace = "argocd"
-      }
-      syncPolicy = {
-        automated = {
-          prune    = true
-          selfHeal = true
-        }
-      }
-    }
-  }
-
-  depends_on = [
-    helm_release.argocd
-  ]
 }
