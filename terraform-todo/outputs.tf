@@ -27,5 +27,6 @@ output "argocd_portforward_command" {
 # Commande pour récupérer le mot de passe admin ArgoCD
 output "argocd_password_command" {
   description = "Commande pour récupérer le mot de passe admin ArgoCD"
-  value       = "kubectl get secret argocd-initial-admin-secret -n argocd -o jsonpath="{.data.password}""
+  value       = "kubectl get secret argocd-initial-admin-secret -n argocd -o jsonpath=\"{.data.password}\""
+  #kubectl -n argocd exec -it deployment/argocd-server -- argocd admin initial-password
 }

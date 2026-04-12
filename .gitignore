@@ -20,7 +20,6 @@ override.tf.json
 *_override.tf.json
 
 # Variables and local config
-terraform.tfvars
 terraform.tfvars.json
 *.auto.tfvars
 *.auto.tfvars.json
