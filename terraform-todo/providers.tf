@@ -1,12 +1,9 @@
+# configure les providers Terraform azurerm, helm et kubernetes. 
+# Il récupère la config du cluster AKS via data.azurerm_kubernetes_cluster
+# puis l’utilise pour parler au cluster.
+
+
 terraform {
-  # ─── Backend distant : stocke le tfstate dans Azure Blob Storage ───────────
-  # Remplace ces valeurs par les tiennes AVANT de faire terraform init
-  
-
-
-
-
-
   required_providers {
     # azurerm → parle à l'API Azure (AKS, ACR, etc.)
     azurerm = {
@@ -32,21 +29,28 @@ provider "azurerm" {
   skip_provider_registration = true
 }
 
+# Lit la config kube APRES creation du cluster AKS
+data "azurerm_kubernetes_cluster" "aks" {
+  name                = module.azure_infra.cluster_name
+  resource_group_name = var.resource_group_name
+  depends_on = [module.azure_infra]
+}
+
 # ─── Provider Helm ────────────────────────────────────────────────────────────
 # Utilise les outputs INDIVIDUELS du module (plus fiable que kube_config[0])
 provider "helm" {
   kubernetes {
-    host                   = module.azure_infra.kube_host
-    client_certificate     = base64decode(module.azure_infra.kube_client_certificate)
-    client_key             = base64decode(module.azure_infra.kube_client_key)
-    cluster_ca_certificate = base64decode(module.azure_infra.kube_cluster_ca_certificate)
+    host                   = data.azurerm_kubernetes_cluster.aks.kube_config[0].host
+    client_certificate     = base64decode(data.azurerm_kubernetes_cluster.aks.kube_config[0].client_certificate)
+    client_key             = base64decode(data.azurerm_kubernetes_cluster.aks.kube_config[0].client_key)
+    cluster_ca_certificate = base64decode(data.azurerm_kubernetes_cluster.aks.kube_config[0].cluster_ca_certificate)
   }
 }
 
 # ─── Provider Kubernetes ─────────────────────────────────────────────────────
 provider "kubernetes" {
-  host                   = module.azure_infra.kube_host
-  client_certificate     = base64decode(module.azure_infra.kube_client_certificate)
-  client_key             = base64decode(module.azure_infra.kube_client_key)
-  cluster_ca_certificate = base64decode(module.azure_infra.kube_cluster_ca_certificate)
+  host                   = data.azurerm_kubernetes_cluster.aks.kube_config[0].host
+  client_certificate     = base64decode(data.azurerm_kubernetes_cluster.aks.kube_config[0].client_certificate)
+  client_key             = base64decode(data.azurerm_kubernetes_cluster.aks.kube_config[0].client_key)
+  cluster_ca_certificate = base64decode(data.azurerm_kubernetes_cluster.aks.kube_config[0].cluster_ca_certificate)
 }

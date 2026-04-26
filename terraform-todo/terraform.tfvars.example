@@ -1,0 +1,11 @@
+# =============================================================================
+# VARIABLES — Copier en terraform.tfvars et remplir les valeurs
+# Ne JAMAIS commiter terraform.tfvars (voir .gitignore)
+# =============================================================================
+
+resource_group_name = "<nom-resource-group>"
+location            = "swedencentral"
+cluster_name        = "<nom-cluster-aks>"
+node_count          = 1
+node_vm_size        = "Standard_D2as_v5"
+acr_name            = "<nom-acr-unique-global>"

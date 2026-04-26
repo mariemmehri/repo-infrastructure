@@ -1,3 +1,6 @@
+# définit les entrées configurables de la stack: nom du groupe de ressources, 
+# région, nom du cluster, nombre de nœuds, taille VM, nom de l’ACR.
+
 variable "resource_group_name" {
   description = "Nom du Resource Group Azure"
   type        = string

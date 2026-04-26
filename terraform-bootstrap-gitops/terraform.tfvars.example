@@ -1,0 +1,10 @@
+# =============================================================================
+# VARIABLES — Copier en terraform.tfvars et remplir les valeurs
+# Ne JAMAIS commiter terraform.tfvars (voir .gitignore)
+# =============================================================================
+
+resource_group_name  = "<nom-resource-group>"
+cluster_name         = "<nom-cluster-aks>"
+config_repo_url      = "https://github.com/<username>/repo-config"
+config_repo_revision = "main"
+child_apps_path      = "apps/children"

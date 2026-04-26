@@ -23,4 +23,15 @@ override.tf.json
 terraform.tfvars
 terraform.tfvars.json
 *.auto.tfvars
+*.tfvars
+!*.tfvars.example
+
 *.auto.tfvars.json
+# Crash logs
+
+crash.log
+crash.*.log
+
+# Backend — valeurs réelles jamais commitées
+
+backend.hcl
