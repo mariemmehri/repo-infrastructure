@@ -1,5 +1,0 @@
-resource_group_name  = "rg-tfstate"
-storage_account_name = "<storageaccountname>"
-container_name       = "tfstate"
-key                  = "terraform-bootstrap-gitops.tfstate"
-use_azuread_auth     = true
