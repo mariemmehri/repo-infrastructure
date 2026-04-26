@@ -1,0 +1,8 @@
+# Copier en terraform.tfvars — Ne JAMAIS commiter terraform.tfvars
+
+location            = "swedencentral"
+resource_group_name = "rg-staging-pfe"
+cluster_name        = "aks-staging-pfe"
+node_count          = 1
+node_vm_size        = "Standard_D2as_v5"
+acr_name            = "<nom-acr-unique>"

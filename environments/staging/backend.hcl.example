@@ -1,0 +1,7 @@
+# Copier en backend.hcl — Ne JAMAIS commiter backend.hcl
+
+resource_group_name  = "rg-tfstate-pfe"
+storage_account_name = "<storage-account-name>"
+container_name       = "tfstate"
+key                  = "staging.tfstate"
+use_azuread_auth     = true
