@@ -1,0 +1,4 @@
+# Copier en terraform.tfvars — Ne JAMAIS commiter terraform.tfvars
+
+resource_group_name = "<nom-resource-group>"
+cluster_name        = "<nom-cluster-aks>"

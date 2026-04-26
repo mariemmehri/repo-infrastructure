@@ -11,7 +11,7 @@ resource "azurerm_resource_group" "staging" {
 
 module "networking" {
   source              = "../../modules/networking"
-  resource_group_name  = azurerm_resource_group.staging.name
+  resource_group_name = azurerm_resource_group.staging.name
   location            = azurerm_resource_group.staging.location
   environment         = "staging"
 }

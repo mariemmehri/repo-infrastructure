@@ -31,3 +31,15 @@ variable "aks_subnet_id" {
 variable "acr_id" {
   type = string
 }
+
+# ← NOUVEAU
+variable "service_cidr" {
+  type    = string
+  default = "10.1.0.0/16"
+}
+
+# ← NOUVEAU
+variable "dns_service_ip" {
+  type    = string
+  default = "10.1.0.10"
+}
