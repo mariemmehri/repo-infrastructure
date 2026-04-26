@@ -1,37 +1,13 @@
-# Terraform state
-*.tfstate
-*.tfstate.*
-crash.log
-crash.*.log
+# Backend — jamais commiter
+backend.hcl
 
-# Terraform directories
+# Variables réelles — jamais commiter
+terraform.tfvars
+
+# Fichiers Terraform générés
+*.tfstate
+*.tfstate.backup
 .terraform/
 .terraform.lock.hcl
-
-# Terraform plan files
-*.tfplan
-*.tfplan.*
-tfplan
-
-# Override files
-override.tf
-override.tf.json
-*_override.tf
-*_override.tf.json
-
-# Variables and local config
-terraform.tfvars
-terraform.tfvars.json
-*.auto.tfvars
-*.tfvars
-!*.tfvars.example
-
-*.auto.tfvars.json
-# Crash logs
-
 crash.log
-crash.*.log
-
-# Backend — valeurs réelles jamais commitées
-
-backend.hcl
+*.tfplan
