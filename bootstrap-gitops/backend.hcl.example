@@ -1,0 +1,5 @@
+resource_group_name  = "rg-tfstate-pfe"
+storage_account_name = "<storage-account-name>"
+container_name       = "tfstate"
+key                  = "bootstrap-gitops.tfstate"
+use_azuread_auth     = true
