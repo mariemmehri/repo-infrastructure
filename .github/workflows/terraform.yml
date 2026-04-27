@@ -22,72 +22,35 @@ jobs:
         with:
           terraform_version: "1.5.0"
 
-      - name: Create reports directory
-        run: mkdir -p reports
-
       - name: Terraform Format Check
-        run: |
-          echo "=== Terraform Format Check ===" > reports/fmt-report.txt
-          echo "Date: $(date)" >> reports/fmt-report.txt
-          echo "" >> reports/fmt-report.txt
-          if terraform fmt -check -recursive; then
-            echo "✅ All files correctly formatted" >> reports/fmt-report.txt
-          else
-            echo "❌ Formatting issues found" >> reports/fmt-report.txt
-            exit 1
-          fi
+        run: terraform fmt -check -recursive
 
       - name: Validate module networking
         working-directory: modules/networking
         run: |
-          mkdir -p ../../reports
-          echo "=== Module: networking ===" >> ../../reports/validate-report.txt
-          terraform init -backend=false -no-color >> ../../reports/validate-report.txt 2>&1
-          terraform validate -no-color >> ../../reports/validate-report.txt 2>&1
-          echo "" >> ../../reports/validate-report.txt
+          terraform init -backend=false
+          terraform validate
 
       - name: Validate module acr
         working-directory: modules/acr
         run: |
-          echo "=== Module: acr ===" >> ../../reports/validate-report.txt
-          terraform init -backend=false -no-color >> ../../reports/validate-report.txt 2>&1
-          terraform validate -no-color >> ../../reports/validate-report.txt 2>&1
-          echo "" >> ../../reports/validate-report.txt
+          terraform init -backend=false
+          terraform validate
 
       - name: Validate module aks
         working-directory: modules/aks
         run: |
-          echo "=== Module: aks ===" >> ../../reports/validate-report.txt
-          terraform init -backend=false -no-color >> ../../reports/validate-report.txt 2>&1
-          terraform validate -no-color >> ../../reports/validate-report.txt 2>&1
-          echo "" >> ../../reports/validate-report.txt
+          terraform init -backend=false
+          terraform validate
 
       - name: Validate module argocd
         working-directory: modules/argocd
         run: |
-          echo "=== Module: argocd ===" >> ../../reports/validate-report.txt
-          terraform init -backend=false -no-color >> ../../reports/validate-report.txt 2>&1
-          terraform validate -no-color >> ../../reports/validate-report.txt 2>&1
-          echo "" >> ../../reports/validate-report.txt
+          terraform init -backend=false
+          terraform validate
 
-      - name: Upload fmt report
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: fmt-report
-          path: reports/fmt-report.txt
-          retention-days: 30
-
-      - name: Upload validate report
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: validate-modules-report
-          path: reports/validate-report.txt
-          retention-days: 30
-
-  validate-environments:
-    name: Validate Environments
+  validate-staging:
+    name: Validate Staging Environment
     runs-on: ubuntu-latest
     needs: [validate-modules]
 
@@ -100,144 +63,64 @@ jobs:
         with:
           terraform_version: "1.5.0"
 
-      - name: Create reports directory
-        run: mkdir -p reports
-
-      - name: Validate staging
+      - name: Terraform Init staging
         working-directory: environments/staging
-        run: |
-          echo "=== Environment: staging ===" >> ../../reports/env-report.txt
-          echo "Date: $(date)" >> ../../reports/env-report.txt
-          echo "" >> ../../reports/env-report.txt
-          terraform init -backend=false -no-color >> ../../reports/env-report.txt 2>&1
-          terraform validate -no-color >> ../../reports/env-report.txt 2>&1
-          echo "" >> ../../reports/env-report.txt
+        run: terraform init -backend=false
 
-      - name: Validate bootstrap-gitops
-        working-directory: bootstrap-gitops
-        run: |
-          echo "=== Stack: bootstrap-gitops ===" >> ../../reports/env-report.txt
-          terraform init -backend=false -no-color >> ../../reports/env-report.txt 2>&1
-          terraform validate -no-color >> ../../reports/env-report.txt 2>&1
-          echo "" >> ../../reports/env-report.txt
+      - name: Terraform Validate staging
+        working-directory: environments/staging
+        run: terraform validate
 
-      - name: Upload environments report
-        uses: actions/upload-artifact@v4
-        if: always()
+  validate-bootstrap:
+    name: Validate Bootstrap GitOps
+    runs-on: ubuntu-latest
+    needs: [validate-modules]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
         with:
-          name: validate-environments-report
-          path: reports/env-report.txt
-          retention-days: 30
+          terraform_version: "1.5.0"
+
+      - name: Terraform Init bootstrap
+        working-directory: bootstrap-gitops
+        run: terraform init -backend=false
+
+      - name: Terraform Validate bootstrap
+        working-directory: bootstrap-gitops
+        run: terraform validate
 
   security-scan:
-    name: Security Scan
+    name: Security Scan tfsec
     runs-on: ubuntu-latest
-    needs: [validate-environments]
+    needs: [validate-staging, validate-bootstrap]
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
 
-      - name: Create reports directory
-        run: mkdir -p reports
-
-      - name: tfsec scan readable
-        uses: aquasecurity/tfsec-action@v1.0.0
-        with:
-          working_directory: .
-          soft_fail: true
-          format: lovely
-          out: reports/tfsec-report.txt
-
-      - name: tfsec scan JSON
-        uses: aquasecurity/tfsec-action@v1.0.0
-        with:
-          working_directory: .
-          soft_fail: true
-          format: json
-          out: reports/tfsec-report.json
-
-      - name: Upload tfsec readable report
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: tfsec-report-readable
-          path: reports/tfsec-report.txt
-          retention-days: 30
-
-      - name: Upload tfsec JSON report
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: tfsec-report-json
-          path: reports/tfsec-report.json
-          retention-days: 30
-
-  summary:
-    name: Pipeline Summary
-    runs-on: ubuntu-latest
-    needs: [validate-modules, validate-environments, security-scan]
-    if: always()
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
-
-      - name: Create reports directory
-        run: mkdir -p reports
-
-      - name: Generate GitHub Step Summary
+      - name: Install tfsec
         run: |
-          cat >> $GITHUB_STEP_SUMMARY << EOF
-          # Terraform CI Report
+          curl -s https://raw.githubusercontent.com/aquasecurity/tfsec/master/scripts/install_linux.sh | bash
 
-          **Date:** $(date)
-          **Branch:** ${{ github.ref_name }}
-          **Commit:** ${{ github.sha }}
-          **Triggered by:** ${{ github.actor }}
-
-          ## Results
-
-          | Check | Status |
-          |---|---|
-          | Terraform Format | ${{ needs.validate-modules.result == 'success' && '✅ Passed' || '❌ Failed' }} |
-          | Module Validation | ${{ needs.validate-modules.result == 'success' && '✅ Passed' || '❌ Failed' }} |
-          | Environment Validation | ${{ needs.validate-environments.result == 'success' && '✅ Passed' || '❌ Failed' }} |
-          | Security Scan (tfsec) | ${{ needs.security-scan.result == 'success' && '✅ Passed' || '⚠️ Warnings' }} |
-
-          ## Artifacts
-          Les rapports détaillés sont disponibles dans l'onglet **Artifacts** :
-          - \`fmt-report\` → résultat du formatage
-          - \`validate-modules-report\` → validation des modules
-          - \`validate-environments-report\` → validation des environnements
-          - \`tfsec-report-readable\` → rapport sécurité lisible
-          - \`tfsec-report-json\` → rapport sécurité JSON
-
-          ## Apply
-          > L'apply Terraform est déclenché manuellement après revue du plan.
-          > Ce pattern est aligné avec les bonnes pratiques (Atlantis, Terraform Cloud).
-          EOF
-
-      - name: Create summary artifact
+      - name: Run tfsec JSON report
         run: |
-          cat > reports/summary.md << EOF
-          # Terraform CI Report
-          Date: $(date)
-          Branch: ${{ github.ref_name }}
-          Commit: ${{ github.sha }}
-          Triggered by: ${{ github.actor }}
+          tfsec . \
+            --format json \
+            --out tfsec-report.json \
+            --soft-fail || true
 
-          ## Results
-          - Format Check: ${{ needs.validate-modules.result }}
-          - Module Validation: ${{ needs.validate-modules.result }}
-          - Environment Validation: ${{ needs.validate-environments.result }}
-          - Security Scan: ${{ needs.security-scan.result }}
-          EOF
+      - name: Run tfsec readable output
+        run: |
+          tfsec . \
+            --soft-fail || true
 
-      - name: Upload summary artifact
-        uses: actions/upload-artifact@v4
-        if: always()
+      - name: Upload tfsec report artifact
+        uses: actions/upload-artifact@v3
         with:
-          name: pipeline-summary
-          path: reports/summary.md
+          name: tfsec-security-report
+          path: tfsec-report.json
           retention-days: 30
