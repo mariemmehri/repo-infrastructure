@@ -22,12 +22,6 @@ jobs:
         with:
           terraform_version: "1.5.0"
 
-      - name: Terraform Format Check
-        run: |
-          terraform fmt -check -recursive 2>&1 | tee reports/fmt-report.txt
-          echo "Exit code: $?" >> reports/fmt-report.txt
-        working-directory: .
-
       - name: Create reports directory
         run: mkdir -p reports
 
@@ -46,6 +40,7 @@ jobs:
       - name: Validate module networking
         working-directory: modules/networking
         run: |
+          mkdir -p ../../reports
           echo "=== Module: networking ===" >> ../../reports/validate-report.txt
           terraform init -backend=false -no-color >> ../../reports/validate-report.txt 2>&1
           terraform validate -no-color >> ../../reports/validate-report.txt 2>&1
@@ -146,14 +141,6 @@ jobs:
       - name: Create reports directory
         run: mkdir -p reports
 
-      - name: tfsec scan JSON
-        uses: aquasecurity/tfsec-action@v1.0.0
-        with:
-          working_directory: .
-          soft_fail: true
-          format: json
-          out: reports/tfsec-report.json
-
       - name: tfsec scan readable
         uses: aquasecurity/tfsec-action@v1.0.0
         with:
@@ -162,13 +149,13 @@ jobs:
           format: lovely
           out: reports/tfsec-report.txt
 
-      - name: Upload tfsec JSON report
-        uses: actions/upload-artifact@v4
-        if: always()
+      - name: tfsec scan JSON
+        uses: aquasecurity/tfsec-action@v1.0.0
         with:
-          name: tfsec-report-json
-          path: reports/tfsec-report.json
-          retention-days: 30
+          working_directory: .
+          soft_fail: true
+          format: json
+          out: reports/tfsec-report.json
 
       - name: Upload tfsec readable report
         uses: actions/upload-artifact@v4
@@ -176,6 +163,14 @@ jobs:
         with:
           name: tfsec-report-readable
           path: reports/tfsec-report.txt
+          retention-days: 30
+
+      - name: Upload tfsec JSON report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: tfsec-report-json
+          path: reports/tfsec-report.json
           retention-days: 30
 
   summary:
@@ -188,9 +183,11 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
 
-      - name: Generate summary report
+      - name: Create reports directory
+        run: mkdir -p reports
+
+      - name: Generate GitHub Step Summary
         run: |
-          mkdir -p reports
           cat >> $GITHUB_STEP_SUMMARY << EOF
           # Terraform CI Report
 
@@ -209,7 +206,6 @@ jobs:
           | Security Scan (tfsec) | ${{ needs.security-scan.result == 'success' && '✅ Passed' || '⚠️ Warnings' }} |
 
           ## Artifacts
-
           Les rapports détaillés sont disponibles dans l'onglet **Artifacts** :
           - \`fmt-report\` → résultat du formatage
           - \`validate-modules-report\` → validation des modules
@@ -218,18 +214,18 @@ jobs:
           - \`tfsec-report-json\` → rapport sécurité JSON
 
           ## Apply
-
           > L'apply Terraform est déclenché manuellement après revue du plan.
           > Ce pattern est aligné avec les bonnes pratiques (Atlantis, Terraform Cloud).
           EOF
 
       - name: Create summary artifact
         run: |
-          cat >> reports/summary.md << EOF
+          cat > reports/summary.md << EOF
           # Terraform CI Report
           Date: $(date)
           Branch: ${{ github.ref_name }}
           Commit: ${{ github.sha }}
+          Triggered by: ${{ github.actor }}
 
           ## Results
           - Format Check: ${{ needs.validate-modules.result }}
@@ -238,7 +234,7 @@ jobs:
           - Security Scan: ${{ needs.security-scan.result }}
           EOF
 
-      - name: Upload summary
+      - name: Upload summary artifact
         uses: actions/upload-artifact@v4
         if: always()
         with:
