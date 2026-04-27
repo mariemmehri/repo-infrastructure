@@ -76,7 +76,7 @@ jobs:
           echo "" >> ../../reports/validate-report.txt
 
       - name: Upload fmt report
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         if: always()
         with:
           name: fmt-report
@@ -84,7 +84,7 @@ jobs:
           retention-days: 30
 
       - name: Upload validate report
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         if: always()
         with:
           name: validate-modules-report
@@ -127,7 +127,7 @@ jobs:
           echo "" >> ../../reports/env-report.txt
 
       - name: Upload environments report
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         if: always()
         with:
           name: validate-environments-report
@@ -163,7 +163,7 @@ jobs:
           out: reports/tfsec-report.txt
 
       - name: Upload tfsec JSON report
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         if: always()
         with:
           name: tfsec-report-json
@@ -171,7 +171,7 @@ jobs:
           retention-days: 30
 
       - name: Upload tfsec readable report
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         if: always()
         with:
           name: tfsec-report-readable
@@ -239,7 +239,7 @@ jobs:
           EOF
 
       - name: Upload summary
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         if: always()
         with:
           name: pipeline-summary
