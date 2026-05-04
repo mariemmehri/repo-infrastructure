@@ -1,4 +1,9 @@
 # Copier en terraform.tfvars — Ne JAMAIS commiter terraform.tfvars
 
-resource_group_name = "<nom-resource-group>"
-cluster_name        = "<nom-cluster-aks>"
+project_id    = "pfe-***-***"
+region        = "europe-west1"
+cluster_name  = "gke-staging-pfe"
+
+gitops_repo_url        = "https://github.com/ton-user/repo-config"
+gitops_target_revision = "main"
+gitops_path            = "apps/"

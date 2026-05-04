@@ -1,26 +1,32 @@
-variable "location" {
-  type    = string
-  default = "swedencentral"
+variable "project_id" {
+  description = "GCP Project ID"
+  type        = string
 }
 
-variable "resource_group_name" {
-  type = string
+variable "region" {
+  description = "GCP region"
+  type        = string
+  default     = "europe-west1"
 }
 
 variable "cluster_name" {
-  type = string
+  description = "Nom du cluster GKE"
+  type        = string
 }
 
 variable "node_count" {
-  type    = number
-  default = 1
+  description = "Nombre de nodes GKE"
+  type        = number
+  default     = 1
 }
 
 variable "node_vm_size" {
-  type    = string
-  default = "Standard_D2as_v5"
+  description = "Machine type GCP"
+  type        = string
+  default     = "e2-standard-2"
 }
 
-variable "acr_name" {
-  type = string
+variable "registry_name" {
+  description = "Nom du repository Artifact Registry"
+  type        = string
 }

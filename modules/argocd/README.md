@@ -1,12 +1,12 @@
 # Module ArgoCD
 
-Installe ArgoCD via Helm sur AKS.
+Installe ArgoCD via Helm sur GKE.
 
 ## Inputs
 
 | Variable                    | Description           |
 | --------------------------- | --------------------- |
-| kube_host                   | API server AKS        |
+| kube_host                   | API server GKE        |
 | kube_client_certificate     | Certificat client     |
 | kube_client_key             | Clé client            |
 | kube_cluster_ca_certificate | CA du cluster         |

@@ -13,15 +13,17 @@
 
 ```bash
 cd backend-config
-terraform init
+terraform init 
 terraform apply
-```
+``` 
 
 ### 2. Infrastructure staging
 
 ```bash
 cd environments/staging
 terraform init -backend-config=backend.hcl
+
+
 terraform apply
 ```
 
@@ -32,3 +34,7 @@ cd bootstrap-gitops
 terraform init -backend-config=backend.hcl
 terraform apply
 ```
+
+<!-- az aks get-credentials  --resource-group rg-staging-pfe  --name  aks-staging-pfe --overwrite-existing -->
+
+<!-- kubectl get secret argocd-initial-admin-secret -n argocd -o jsonpath="{.data.password}" | ForEach-Object {[System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($_))} -->

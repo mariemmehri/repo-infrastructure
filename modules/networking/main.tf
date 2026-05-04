@@ -1,18 +1,17 @@
-resource "azurerm_virtual_network" "main" {
-  name                = "vnet-${var.environment}-pfe"
-  location            = var.location
-  resource_group_name = var.resource_group_name
-  address_space       = var.vnet_address_space
+resource "google_compute_network" "main" {
+  name                    = "vpc-${var.environment}-pfe"
+  auto_create_subnetworks = false
+  project                 = var.project_id
 
-  tags = {
-    Environment = var.environment
-    ManagedBy   = "Terraform"
-  }
+  description = "VPC for ${var.environment} environment - PFE"
 }
 
-resource "azurerm_subnet" "aks" {
-  name                 = "subnet-aks-${var.environment}"
-  resource_group_name  = var.resource_group_name
-  virtual_network_name = azurerm_virtual_network.main.name
-  address_prefixes     = [var.aks_subnet_prefix]
+resource "google_compute_subnetwork" "aks" {
+  name          = "subnet-gke-${var.environment}"
+  ip_cidr_range = var.gke_subnet_prefix
+  region        = var.region
+  network       = google_compute_network.main.id
+  project       = var.project_id
+
+  private_ip_google_access = true
 }

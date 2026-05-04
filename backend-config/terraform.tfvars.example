@@ -1,7 +1,5 @@
-# Copier en terraform.tfvars et remplir
-# Ne JAMAIS commiter terraform.tfvars
+# Copier en terraform.tfvars — Ne JAMAIS commiter terraform.tfvars
 
-location             = "swedencentral"
-resource_group_name  = "rg-tfstate-pfe"
-storage_account_name = "<nom-unique-global>"
-container_name       = "tfstate"
+project_id  = "pfe-2026"
+region      = "europe-west1"
+bucket_name = "tfstate-pfe-2026"  # doit être globalement unique

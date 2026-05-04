@@ -1,27 +1,32 @@
-variable "resource_group_name" {
-  description = "Resource group contenant le cluster AKS"
+variable "project_id" {
+  description = "GCP Project ID"
   type        = string
+}
+
+variable "region" {
+  description = "GCP region"
+  type        = string
+  default     = "europe-west1"
 }
 
 variable "cluster_name" {
-  description = "Nom du cluster AKS deja provisionne"
+  description = "Nom du cluster GKE existant"
   type        = string
 }
 
-variable "config_repo_url" {
-  description = "URL Git du repo de configuration GitOps"
+variable "gitops_repo_url" {
+  description = "URL du repo GitOps (config repo)"
   type        = string
-  default     = "https://github.com/mariemmehri/repo-config"
 }
 
-variable "config_repo_revision" {
-  description = "Branche/tag Git a suivre par ArgoCD"
+variable "gitops_target_revision" {
+  description = "Branch Git cible"
   type        = string
   default     = "main"
 }
 
-variable "child_apps_path" {
-  description = "Dossier des applications enfants dans le config repo"
+variable "gitops_path" {
+  description = "Chemin vers les applications ArgoCD dans le repo"
   type        = string
-  default     = "apps/children"
+  default     = "apps/"
 }

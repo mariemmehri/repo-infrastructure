@@ -1,5 +1,4 @@
-resource_group_name  = "rg-tfstate-pfe"
-storage_account_name = "<storage-account-name>"
-container_name       = "tfstate"
-key                  = "bootstrap-gitops.tfstate"
-use_azuread_auth     = true
+# Copier en backend.hcl — Ne JAMAIS commiter backend.hcl
+
+bucket = "tfstate-pfe-gitops-2024"
+prefix = "bootstrap"

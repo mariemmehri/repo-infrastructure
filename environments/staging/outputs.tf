@@ -1,13 +1,13 @@
-output "aks_cluster_name" {
-  value = module.aks.cluster_name
+output "gke_cluster_name" {
+  value = module.gke.cluster_name
 }
 
-output "acr_login_server" {
-  value = module.acr.acr_login_server
+output "registry_login_server" {
+  value = module.artifact_registry.acr_login_server
 }
 
 output "kubectl_command" {
-  value = "az aks get-credentials --resource-group ${var.resource_group_name} --name ${var.cluster_name}"
+  value = "gcloud container clusters get-credentials ${var.cluster_name} --region ${var.region} --project ${var.project_id}"
 }
 
 output "argocd_portforward" {

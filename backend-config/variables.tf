@@ -1,22 +1,15 @@
-variable "location" {
-  description = "Azure region"
-  type        = string
-  default     = "swedencentral"
-}
-
-variable "resource_group_name" {
-  description = "Resource group for tfstate storage"
-  type        = string
-  default     = "rg-tfstate-pfe"
-}
-
-variable "storage_account_name" {
-  description = "Storage account name (globally unique, lowercase, no hyphens)"
+variable "project_id" {
+  description = "GCP Project ID"
   type        = string
 }
 
-variable "container_name" {
-  description = "Blob container name"
+variable "region" {
+  description = "GCP region"
   type        = string
-  default     = "tfstate"
+  default     = "europe-west1"
+}
+
+variable "bucket_name" {
+  description = "GCS bucket name (globally unique)"
+  type        = string
 }

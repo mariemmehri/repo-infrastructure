@@ -5,24 +5,20 @@
 # Objectif: creer l'application racine ArgoCD quand le CRD Application
 # est deja enregistre par le chart ArgoCD.
 # ============================================================================
-
-resource "kubernetes_manifest" "argocd_root_app" {
+resource "kubernetes_manifest" "argocd_app_of_apps" {
   manifest = {
     apiVersion = "argoproj.io/v1alpha1"
     kind       = "Application"
     metadata = {
-      name      = "apps-root"
+      name      = "app-of-apps"
       namespace = "argocd"
     }
     spec = {
       project = "default"
       source = {
-        repoURL        = var.config_repo_url
-        targetRevision = var.config_repo_revision
-        path           = var.child_apps_path
-        directory = {
-          recurse = true
-        }
+        repoURL        = var.gitops_repo_url
+        targetRevision = var.gitops_target_revision
+        path           = var.gitops_path
       }
       destination = {
         server    = "https://kubernetes.default.svc"

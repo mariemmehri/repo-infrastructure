@@ -1,8 +1,8 @@
 terraform {
   required_providers {
-    azurerm = {
-      source  = "hashicorp/azurerm"
-      version = "~> 3.0"
+    google = {
+      source  = "hashicorp/google"
+      version = "~> 5.0"
     }
     kubernetes = {
       source  = "hashicorp/kubernetes"
@@ -11,19 +11,22 @@ terraform {
   }
 }
 
-provider "azurerm" {
-  features {}
-  skip_provider_registration = true
+provider "google" {
+  project = var.project_id
+  region  = var.region
 }
 
-data "azurerm_kubernetes_cluster" "aks" {
-  name                = var.cluster_name
-  resource_group_name = var.resource_group_name
+# Récupère les credentials du cluster GKE existant
+data "google_container_cluster" "gke" {
+  name     = var.cluster_name
+  location = var.region
+  project  = var.project_id
 }
 
 provider "kubernetes" {
-  host                   = data.azurerm_kubernetes_cluster.aks.kube_config[0].host
-  client_certificate     = base64decode(data.azurerm_kubernetes_cluster.aks.kube_config[0].client_certificate)
-  client_key             = base64decode(data.azurerm_kubernetes_cluster.aks.kube_config[0].client_key)
-  cluster_ca_certificate = base64decode(data.azurerm_kubernetes_cluster.aks.kube_config[0].cluster_ca_certificate)
+  host = "https://${data.google_container_cluster.gke.endpoint}"
+
+  client_certificate     = base64decode(data.google_container_cluster.gke.master_auth[0].client_certificate)
+  client_key             = base64decode(data.google_container_cluster.gke.master_auth[0].client_key)
+  cluster_ca_certificate = base64decode(data.google_container_cluster.gke.master_auth[0].cluster_ca_certificate)
 }

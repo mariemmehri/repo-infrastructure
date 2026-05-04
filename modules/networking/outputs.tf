@@ -1,11 +1,11 @@
-output "vnet_id" {
-  value = azurerm_virtual_network.main.id
+output "vpc_id" {
+  value = google_compute_network.main.id
 }
 
-output "aks_subnet_id" {
-  value = azurerm_subnet.aks.id
+output "gke_subnet_id" {
+  value = google_compute_subnetwork.aks.id
 }
 
-output "vnet_name" {
-  value = azurerm_virtual_network.main.name
+output "vpc_name" {
+  value = google_compute_network.main.name
 }
