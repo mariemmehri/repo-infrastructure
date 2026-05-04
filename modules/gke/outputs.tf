@@ -23,6 +23,10 @@ output "kube_client_certificate" {
   value     = google_container_cluster.gke.master_auth[0].client_certificate
   sensitive = true
 }
+output "kube_token" {
+  value     = data.google_client_config.default.access_token
+  sensitive = true
+}
 
 output "kube_client_key" {
   value     = google_container_cluster.gke.master_auth[0].client_key

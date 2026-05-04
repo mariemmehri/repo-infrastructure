@@ -24,7 +24,6 @@ module "gke" {
   vpc_name      = module.networking.vpc_name
   gke_subnet_id = module.networking.gke_subnet_id
   # acr_id        = module.artifact_registry.acr_id
-
   depends_on = [module.networking]
 }
 

@@ -23,15 +23,13 @@ provider "google" {
 provider "helm" {
   kubernetes {
     host                   = module.gke.kube_host
-    client_certificate     = base64decode(module.gke.kube_client_certificate)
-    client_key             = base64decode(module.gke.kube_client_key)
+    token                  = module.gke.kube_token
     cluster_ca_certificate = base64decode(module.gke.kube_cluster_ca_certificate)
   }
 }
 
 provider "kubernetes" {
   host                   = module.gke.kube_host
-  client_certificate     = base64decode(module.gke.kube_client_certificate)
-  client_key             = base64decode(module.gke.kube_client_key)
+  token                  = module.gke.kube_token
   cluster_ca_certificate = base64decode(module.gke.kube_cluster_ca_certificate)
 }

@@ -13,12 +13,14 @@ resource "google_project_iam_member" "artifact_registry_reader" {
   role    = "roles/artifactregistry.reader"
   member  = "serviceAccount:${google_service_account.gke_nodes.email}"
 }
+data "google_client_config" "default" {}
+
 
 # Cluster GKE — on désactive le node pool par défaut
 # pour le gérer séparément (bonne pratique)
 resource "google_container_cluster" "gke" {
   name     = var.cluster_name
-  location = var.region
+  location = "${var.region}-b"
   project  = var.project_id
 
   network    = var.vpc_name
@@ -30,6 +32,8 @@ resource "google_container_cluster" "gke" {
   initial_node_count       = 1
 
   deletion_protection = false
+  networking_mode      = "VPC_NATIVE"
+  ip_allocation_policy {}
 
   workload_identity_config {
     workload_pool = "${var.project_id}.svc.id.goog"
@@ -45,14 +49,21 @@ resource "google_container_cluster" "gke" {
 resource "google_container_node_pool" "default" {
   name       = "default"
   cluster    = google_container_cluster.gke.id
-  location   = var.region
+  location   = "${var.region}-b"
+  node_locations = ["${var.region}-b"]
   project    = var.project_id
   node_count = var.node_count
+  autoscaling {
+    min_node_count = 1
+    max_node_count = 1
+  }
 
   node_config {
     machine_type    = var.node_vm_size
     disk_size_gb    = 30
     service_account = google_service_account.gke_nodes.email
+    spot = true
+  
 
     oauth_scopes = [
       "https://www.googleapis.com/auth/cloud-platform"
