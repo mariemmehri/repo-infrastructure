@@ -39,3 +39,10 @@ module "argocd" {
 
   depends_on = [module.gke]
 }
+# ─── Nouveau — binding terraform-ci peut utiliser le SA GKE ─
+resource "google_service_account_iam_member" "terraform_ci_uses_gke_sa" {
+  service_account_id = module.gke.gke_nodes_sa_name
+  role               = "roles/iam.serviceAccountUser"
+  member             = "serviceAccount:sa-terraform-ci@${var.project_id}.iam.gserviceaccount.com"
+  depends_on         = [module.gke]
+}
