@@ -9,6 +9,7 @@ on:
       - "environments/**"
       - "modules/**"
       - ".github/workflows/ci.yml"
+
   pull_request:
     branches: [main]
     paths:
@@ -16,7 +17,7 @@ on:
       - "bootstrap-gitops/**"
       - "environments/**"
       - "modules/**"
-      - ".github/workflows/ci.yml"
+
   workflow_dispatch:
     inputs:
       action:
@@ -25,12 +26,13 @@ on:
         default: "apply"
         type: choice
         options: [plan, apply, destroy-staging]
+
       phase:
         description: "target phase"
         required: true
         default: "all"
         type: choice
-        options: [all, phase-0-backend, phase-a-infra, phase-b-gitops]
+        options: [all, phase-a-infra, phase-b-gitops]
 
 concurrency:
   group: terraform-${{ github.ref }}
@@ -47,333 +49,207 @@ env:
   TF_INPUT: "false"
   TF_CLI_ARGS: "-no-color"
 
+# ─────────────────────────────────────────────
 jobs:
-  # ──────────────────────────────────────────────────────────
-  # JOB 1 — Validate : fmt + validate tous les modules
-  # ──────────────────────────────────────────────────────────
-  terraform-validate:
-    name: Validate
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
 
-      - uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: ${{ env.TF_VERSION }}
+# =========================================================
+# 1. VALIDATION
+# =========================================================
+terraform-validate:
+  name: Validate
+  runs-on: ubuntu-latest
 
-      - name: Check formatting
-        run: terraform fmt -check -recursive
+  steps:
+    - uses: actions/checkout@v4
 
-      - name: Validate all stacks
-        run: |
-          for d in backend-config environments/staging bootstrap-gitops modules/*; do
-            [ -d "$d" ] || continue
-            echo "=== Validating $d ==="
-            (cd "$d" && terraform init -backend=false -input=false && terraform validate)
-          done
+    - uses: hashicorp/setup-terraform@v3
+      with:
+        terraform_version: ${{ env.TF_VERSION }}
 
-  # ──────────────────────────────────────────────────────────
-  # JOB 2 — Phase 0 : création du bucket GCS (state local)
-  # ──────────────────────────────────────────────────────────
-  phase-0-backend:
-    name: Phase 0 — GCS Backend
-    needs: terraform-validate
-    runs-on: ubuntu-latest
-    if: |
+    - name: Check formatting
+      run: terraform fmt -check -recursive
+
+    - name: Validate modules
+      run: |
+        for d in backend-config environments/staging bootstrap-gitops modules/*; do
+          [ -d "$d" ] || continue
+          echo "Validating $d"
+          (cd "$d" && terraform init -backend=false -input=false && terraform validate)
+        done
+
+
+# =========================================================
+# 2. PHASE A — INFRA (GKE + NETWORK + REGISTRY + ARGOCD)
+# =========================================================
+phase-a-infra:
+  name: Phase A — Infra
+  needs: terraform-validate
+  runs-on: ubuntu-latest
+
+  if: |
+    github.event_name != 'pull_request' ||
+    github.event.pull_request.head.repo.fork == false
+
+  defaults:
+    run:
+      working-directory: environments/staging
+
+  steps:
+    - uses: actions/checkout@v4
+
+    - uses: hashicorp/setup-terraform@v3
+      with:
+        terraform_version: ${{ env.TF_VERSION }}
+
+    - name: Authenticate (OIDC)
+      uses: google-github-actions/auth@v2
+      with:
+        workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
+        service_account: ${{ secrets.SERVICE_ACCOUNT_EMAIL }}
+
+    - name: Setup gcloud
+      uses: google-github-actions/setup-gcloud@v2
+      with:
+        project_id: ${{ vars.GCP_PROJECT_ID }}
+
+    # ─────────────────────────────────────────────
+    # INLINE BACKEND CONFIG (NO FILE)
+    # ─────────────────────────────────────────────
+    - name: Terraform Init
+      run: |
+        terraform init \
+          -backend-config="bucket=${{ vars.GCS_BUCKET_NAME }}" \
+          -backend-config="prefix=staging" \
+          -reconfigure -input=false
+
+    - name: Terraform Plan
+      id: plan
+      run: |
+        set +e
+        terraform plan -out=tfplan -detailed-exitcode -input=false
+        echo "exitcode=$?" >> $GITHUB_OUTPUT
+
+    - name: Upload plan
+      uses: actions/upload-artifact@v4
+      with:
+        name: tfplan
+        path: environments/staging/tfplan
+
+    # ─────────────────────────────────────────────
+    # APPLY
+    # ─────────────────────────────────────────────
+    - name: Apply infra
+      if: |
+        steps.plan.outputs.exitcode == '2' &&
+        (
+          github.event_name == 'push' ||
+          (github.event_name == 'workflow_dispatch' && inputs.action == 'apply')
+        )
+      run: terraform apply -auto-approve tfplan
+
+
+# =========================================================
+# 3. PHASE B — GITOPS BOOTSTRAP
+# =========================================================
+phase-b-gitops:
+  name: Phase B — GitOps
+  needs: phase-a-infra
+  runs-on: ubuntu-latest
+
+  if: |
+    needs.phase-a-infra.result == 'success' &&
+    (
       github.event_name == 'push' ||
       (github.event_name == 'workflow_dispatch' &&
-       (inputs.phase == 'all' || inputs.phase == 'phase-0-backend'))
-    defaults:
-      run:
-        working-directory: backend-config
-    steps:
-      - uses: actions/checkout@v4
+       inputs.action == 'apply' &&
+       inputs.phase == 'all')
+    )
 
-      - uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: ${{ env.TF_VERSION }}
+  defaults:
+    run:
+      working-directory: bootstrap-gitops
 
-      - name: Authenticate (OIDC)
-        uses: google-github-actions/auth@v2
-        with:
-          workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ secrets.SERVICE_ACCOUNT_EMAIL }}
+  steps:
+    - uses: actions/checkout@v4
 
-      - name: Generate terraform.tfvars
-        run: |
-          cat > terraform.tfvars <<EOF
-          project_id  = "${{ vars.GCP_PROJECT_ID }}"
-          region      = "${{ vars.GCP_REGION }}"
-          bucket_name = "${{ vars.GCS_BUCKET_NAME }}"
-          EOF
+    - uses: hashicorp/setup-terraform@v3
+      with:
+        terraform_version: ${{ env.TF_VERSION }}
 
-      - name: terraform init
-        run: terraform init -input=false
+    - name: Authenticate (OIDC)
+      uses: google-github-actions/auth@v2
+      with:
+        workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
+        service_account: ${{ secrets.SERVICE_ACCOUNT_EMAIL }}
 
-      - name: terraform plan
-        id: plan
-        run: |
-          set +e
-          terraform plan -out=tfplan -detailed-exitcode -input=false
-          echo "exitcode=$?" >> $GITHUB_OUTPUT
+    - name: Get cluster creds
+      run: |
+        gcloud container clusters get-credentials \
+          ${{ vars.GKE_CLUSTER_NAME }} \
+          --region ${{ vars.GCP_REGION }} \
+          --project ${{ vars.GCP_PROJECT_ID }}
 
-      - name: terraform apply
-        if: steps.plan.outputs.exitcode == '2'
-        run: terraform apply -auto-approve -input=false tfplan
+    - name: Terraform Init
+      run: |
+        terraform init \
+          -backend-config="bucket=${{ vars.GCS_BUCKET_NAME }}" \
+          -backend-config="prefix=bootstrap" \
+          -reconfigure -input=false
 
-  # ──────────────────────────────────────────────────────────
-  # JOB 3 — Phase A : infra GKE + Networking + Registry + ArgoCD
-  # ──────────────────────────────────────────────────────────
-  phase-a-infra:
-    name: Phase A — Infrastructure Staging
-    needs: [terraform-validate, phase-0-backend]
-    runs-on: ubuntu-latest
-    if: |
-      always() &&
-      (github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false) &&
-      (needs.phase-0-backend.result == 'success' || needs.phase-0-backend.result == 'skipped')
-    defaults:
-      run:
-        working-directory: environments/staging
-    steps:
-      - uses: actions/checkout@v4
+    - name: Terraform Plan
+      id: plan
+      run: |
+        set +e
+        terraform plan -out=tfplan -detailed-exitcode
+        echo "exitcode=$?" >> $GITHUB_OUTPUT
 
-      - uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: ${{ env.TF_VERSION }}
+    - name: Apply GitOps
+      if: steps.plan.outputs.exitcode == '2'
+      run: terraform apply -auto-approve tfplan
 
-      - name: Authenticate (OIDC)
-        uses: google-github-actions/auth@v2
-        with:
-          workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ secrets.SERVICE_ACCOUNT_EMAIL }}
 
-      - name: Setup gcloud
-        uses: google-github-actions/setup-gcloud@v2
-        with:
-          project_id: ${{ vars.GCP_PROJECT_ID }}
+# =========================================================
+# 4. DESTROY (PROTECTED)
+# =========================================================
+terraform-destroy:
+  name: Destroy Staging
+  runs-on: ubuntu-latest
 
-      - name: Generate backend.hcl & terraform.tfvars
-        run: |
-          cat > backend.hcl <<EOF
-          bucket = "${{ vars.GCS_BUCKET_NAME }}"
-          prefix = "staging"
-          EOF
+  if: github.event_name == 'workflow_dispatch' && inputs.action == 'destroy-staging'
 
-          cat > terraform.tfvars <<EOF
-          project_id    = "${{ vars.GCP_PROJECT_ID }}"
-          region        = "${{ vars.GCP_REGION }}"
-          cluster_name  = "${{ vars.GKE_CLUSTER_NAME }}"
-          node_count    = ${{ vars.NODE_COUNT || 1 }}
-          node_vm_size  = "${{ vars.NODE_VM_SIZE || 'e2-small' }}"
-          registry_name = "${{ vars.GAR_REPOSITORY_NAME }}"
-          EOF
+  environment: staging-destroy
 
-      - name: terraform init
-        run: terraform init -backend-config=backend.hcl -reconfigure -input=false
+  steps:
+    - uses: actions/checkout@v4
 
-      - name: terraform plan
-        id: plan
-        run: |
-          set +e
-          terraform plan -out=tfplan -detailed-exitcode -lock-timeout=60s -input=false 2>&1 | tee plan.txt
-          echo "exitcode=${PIPESTATUS[0]}" >> $GITHUB_OUTPUT
+    - uses: hashicorp/setup-terraform@v3
+      with:
+        terraform_version: ${{ env.TF_VERSION }}
 
-      - name: Upload plan artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: terraform-plan-staging
-          path: environments/staging/plan.txt
-          retention-days: 7
+    - name: Authenticate (OIDC)
+      uses: google-github-actions/auth@v2
+      with:
+        workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
+        service_account: ${{ secrets.SERVICE_ACCOUNT_EMAIL }}
 
-      - name: Post plan comment on PR
-        if: github.event_name == 'pull_request'
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const fs = require('fs');
-            const planPath = '${{ github.workspace }}/environments/staging/plan.txt';
-            const plan = fs.existsSync(planPath)
-              ? fs.readFileSync(planPath, 'utf8')
-              : 'Plan non disponible';
-            const body = `### 🏗️ Terraform Plan — staging\n\n\`\`\`hcl\n${plan.substring(0, 60000)}\n\`\`\``;
-            github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body
-            });
+    # Destroy GitOps first
+    - name: Destroy GitOps
+      working-directory: bootstrap-gitops
+      run: |
+        terraform init \
+          -backend-config="bucket=${{ vars.GCS_BUCKET_NAME }}" \
+          -backend-config="prefix=bootstrap" \
+          -reconfigure -input=false
 
-      - name: Apply — networking, GKE, registry
-        if: |
-          steps.plan.outputs.exitcode == '2' &&
-          ((github.event_name == 'push' && github.ref == 'refs/heads/main') ||
-           (github.event_name == 'workflow_dispatch' && inputs.action == 'apply'))
-        run: |
-          terraform apply \
-            -target=module.networking \
-            -target=module.artifact_registry \
-            -target=module.gke \
-            -auto-approve -lock-timeout=300s -input=false
+        terraform destroy -auto-approve || true
 
-      - name: Wait for GKE nodes Ready
-        if: |
-          steps.plan.outputs.exitcode == '2' &&
-          ((github.event_name == 'push' && github.ref == 'refs/heads/main') ||
-           (github.event_name == 'workflow_dispatch' && inputs.action == 'apply'))
-        run: |
-          gcloud container clusters get-credentials \
-            ${{ vars.GKE_CLUSTER_NAME }} \
-            --region ${{ vars.GCP_REGION }} \
-            --project ${{ vars.GCP_PROJECT_ID }}
-          kubectl wait node --all --for=condition=Ready --timeout=600s
+    # Destroy Infra
+    - name: Destroy Infra
+      working-directory: environments/staging
+      run: |
+        terraform init \
+          -backend-config="bucket=${{ vars.GCS_BUCKET_NAME }}" \
+          -backend-config="prefix=staging" \
+          -reconfigure -input=false
 
-      - name: Apply — ArgoCD (after cluster ready)
-        if: |
-          steps.plan.outputs.exitcode == '2' &&
-          ((github.event_name == 'push' && github.ref == 'refs/heads/main') ||
-           (github.event_name == 'workflow_dispatch' && inputs.action == 'apply'))
-        run: |
-          terraform apply \
-            -target=module.argocd \
-            -auto-approve -lock-timeout=300s -input=false
-
-  # ──────────────────────────────────────────────────────────
-  # JOB 4 — Phase B : Bootstrap ArgoCD App of Apps
-  # ──────────────────────────────────────────────────────────
-  phase-b-gitops:
-    name: Phase B — Bootstrap GitOps
-    needs: [phase-a-infra]
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: bootstrap-gitops
-    if: |
-      (needs.phase-a-infra.result == 'success' || needs.phase-a-infra.result == 'skipped') &&
-      ((github.event_name == 'push' && github.ref == 'refs/heads/main') ||
-       (github.event_name == 'workflow_dispatch' && inputs.action == 'apply' &&
-        (inputs.phase == 'all' || inputs.phase == 'phase-b-gitops')))
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: ${{ env.TF_VERSION }}
-
-      - name: Authenticate (OIDC)
-        uses: google-github-actions/auth@v2
-        with:
-          workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ secrets.SERVICE_ACCOUNT_EMAIL }}
-
-      - name: Setup gcloud & get cluster credentials
-        uses: google-github-actions/setup-gcloud@v2
-        with:
-          project_id: ${{ vars.GCP_PROJECT_ID }}
-
-      - name: Get GKE credentials
-        run: |
-          gcloud container clusters get-credentials \
-            ${{ vars.GKE_CLUSTER_NAME }} \
-            --region ${{ vars.GCP_REGION }} \
-            --project ${{ vars.GCP_PROJECT_ID }}
-
-      - name: Wait for ArgoCD CRDs
-        run: |
-          kubectl wait --for=condition=established \
-            crd/applications.argoproj.io \
-            --timeout=120s -n argocd || true
-
-      - name: Generate backend.hcl & terraform.tfvars
-        run: |
-          cat > backend.hcl <<EOF
-          bucket = "${{ vars.GCS_BUCKET_NAME }}"
-          prefix = "bootstrap"
-          EOF
-
-          cat > terraform.tfvars <<EOF
-          project_id             = "${{ vars.GCP_PROJECT_ID }}"
-          region                 = "${{ vars.GCP_REGION }}"
-          cluster_name           = "${{ vars.GKE_CLUSTER_NAME }}"
-          gitops_repo_url        = "${{ vars.GITOPS_REPO_URL }}"
-          gitops_path            = "${{ vars.GITOPS_PATH }}"
-          EOF
-
-      - name: terraform init
-        run: terraform init -backend-config=backend.hcl -reconfigure -input=false
-
-      - name: terraform plan
-        id: plan
-        run: |
-          set +e
-          terraform plan -out=tfplan -detailed-exitcode -input=false
-          echo "exitcode=$?" >> $GITHUB_OUTPUT
-
-      - name: terraform apply
-        if: steps.plan.outputs.exitcode == '2'
-        run: terraform apply -auto-approve -input=false tfplan
-
-  # ──────────────────────────────────────────────────────────
-  # JOB 5 — Destroy (manuel uniquement, avec environnement protégé)
-  # ──────────────────────────────────────────────────────────
-  terraform-destroy:
-    name: Destroy Staging
-    runs-on: ubuntu-latest
-    if: github.event_name == 'workflow_dispatch' && inputs.action == 'destroy-staging'
-    environment: staging-destroy
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: ${{ env.TF_VERSION }}
-
-      - name: Authenticate (OIDC)
-        uses: google-github-actions/auth@v2
-        with:
-          workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ secrets.SERVICE_ACCOUNT_EMAIL }}
-
-      - name: Setup gcloud
-        uses: google-github-actions/setup-gcloud@v2
-        with:
-          project_id: ${{ vars.GCP_PROJECT_ID }}
-
-      - name: Destroy bootstrap-gitops
-        working-directory: bootstrap-gitops
-        run: |
-          cat > backend.hcl <<EOF
-          bucket = "${{ vars.GCS_BUCKET_NAME }}"
-          prefix = "bootstrap"
-          EOF
-          cat > terraform.tfvars <<EOF
-          project_id      = "${{ vars.GCP_PROJECT_ID }}"
-          region          = "${{ vars.GCP_REGION }}"
-          cluster_name    = "${{ vars.GKE_CLUSTER_NAME }}"
-          gitops_repo_url = "${{ vars.GITOPS_REPO_URL }}"
-          gitops_path     = "${{ vars.GITOPS_PATH }}"
-          EOF
-          terraform init -backend-config=backend.hcl -reconfigure -input=false
-          terraform destroy -auto-approve -input=false || true
-
-      - name: Destroy environments/staging
-        working-directory: environments/staging
-        run: |
-          cat > backend.hcl <<EOF
-          bucket = "${{ vars.GCS_BUCKET_NAME }}"
-          prefix = "staging"
-          EOF
-          cat > terraform.tfvars <<EOF
-          project_id    = "${{ vars.GCP_PROJECT_ID }}"
-          region        = "${{ vars.GCP_REGION }}"
-          cluster_name  = "${{ vars.GKE_CLUSTER_NAME }}"
-          node_count    = 1
-          node_vm_size  = "e2-small"
-          registry_name = "${{ vars.GAR_REPOSITORY_NAME }}"
-          EOF
-          gcloud container clusters get-credentials \
-            ${{ vars.GKE_CLUSTER_NAME }} \
-            --region ${{ vars.GCP_REGION }} \
-            --project ${{ vars.GCP_PROJECT_ID }} || true
-          terraform init -backend-config=backend.hcl -reconfigure -input=false
-          terraform destroy -auto-approve -input=false
+        terraform destroy -auto-approve
