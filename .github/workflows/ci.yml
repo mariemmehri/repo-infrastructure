@@ -5,15 +5,18 @@ on:
     branches: [main]
     paths:
       - "backend-config/**"
+      - "bootstrap-gitops/**"
       - "environments/**"
       - "modules/**"
-      - ".github/workflows/terraform.yml"
+      - ".github/workflows/ci.yml"
   pull_request:
     branches: [main]
     paths:
       - "backend-config/**"
+      - "bootstrap-gitops/**"
       - "environments/**"
       - "modules/**"
+      - ".github/workflows/ci.yml"
   workflow_dispatch:
     inputs:
       action:
