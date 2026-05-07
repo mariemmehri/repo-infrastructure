@@ -14,12 +14,12 @@ terraform {
     }
   }
 }
-
+# Outil pour parler à GCP:crée ressources GCP
 provider "google" {
   project = var.project_id
   region  = var.region
 }
-
+# Outil pour installer des charts Helm:installe ArgoCD
 provider "helm" {
   kubernetes {
     host                   = module.gke.kube_host
@@ -27,7 +27,7 @@ provider "helm" {
     cluster_ca_certificate = base64decode(module.gke.kube_cluster_ca_certificate)
   }
 }
-
+# Outil pour parler à Kubernetes (GKE):gère le cluster GKE
 provider "kubernetes" {
   host                   = module.gke.kube_host
   token                  = module.gke.kube_token

@@ -6,7 +6,7 @@ resource "google_compute_network" "main" {
   description = "VPC for ${var.environment} environment - PFE"
 }
 
-resource "google_compute_subnetwork" "aks" {
+resource "google_compute_subnetwork" "gke" {
   name          = "subnet-gke-${var.environment}"
   ip_cidr_range = var.gke_subnet_prefix
   region        = var.region

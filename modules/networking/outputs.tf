@@ -3,7 +3,7 @@ output "vpc_id" {
 }
 
 output "gke_subnet_id" {
-  value = google_compute_subnetwork.aks.id
+  value = google_compute_subnetwork.gke.id
 }
 
 output "vpc_name" {

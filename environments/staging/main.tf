@@ -1,3 +1,5 @@
+#appele aux modules pour créer les ressources
+# Module 1 — Crée le réseau
 module "networking" {
   source      = "../../modules/networking"
   project_id  = var.project_id
@@ -5,6 +7,7 @@ module "networking" {
   environment = "staging"
 }
 
+# Module 2 — Crée le registre d'artifacts 
 module "artifact_registry" {
   source      = "../../modules/artifact_registry"
   acr_name    = var.registry_name
@@ -13,6 +16,7 @@ module "artifact_registry" {
   environment = "staging"
 }
 
+# Module 3 — Crée le cluster GKE
 module "gke" {
   source        = "../../modules/gke"
   cluster_name  = var.cluster_name
@@ -23,10 +27,9 @@ module "gke" {
   node_vm_size  = var.node_vm_size
   vpc_name      = module.networking.vpc_name
   gke_subnet_id = module.networking.gke_subnet_id
-  # acr_id        = module.artifact_registry.acr_id
   depends_on = [module.networking]
 }
-
+# Module 4 — Installe ArgoCD dans le cluster GKE
 module "argocd" {
   source                      = "../../modules/argocd"
   kube_host                   = module.gke.kube_host
