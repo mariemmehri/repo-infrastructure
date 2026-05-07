@@ -32,7 +32,7 @@ resource "google_container_cluster" "gke" {
   initial_node_count       = 1
 
   deletion_protection = false
-  networking_mode      = "VPC_NATIVE"
+  networking_mode     = "VPC_NATIVE"
   ip_allocation_policy {}
 
   workload_identity_config {
@@ -40,19 +40,19 @@ resource "google_container_cluster" "gke" {
   }
 
   resource_labels = {
-  environment = var.environment
-  managed-by  = "terraform"
-}
+    environment = var.environment
+    managed-by  = "terraform"
+  }
 }
 
 # Node pool séparé — équivalent du default_node_pool AKS
 resource "google_container_node_pool" "default" {
-  name       = "default"
-  cluster    = google_container_cluster.gke.id
-  location   = "${var.region}-b"
+  name           = "default"
+  cluster        = google_container_cluster.gke.id
+  location       = "${var.region}-b"
   node_locations = ["${var.region}-b"]
-  project    = var.project_id
-  node_count = var.node_count
+  project        = var.project_id
+  node_count     = var.node_count
   autoscaling {
     min_node_count = 1
     max_node_count = 1
@@ -62,8 +62,8 @@ resource "google_container_node_pool" "default" {
     machine_type    = var.node_vm_size
     disk_size_gb    = 30
     service_account = google_service_account.gke_nodes.email
-    spot = true
-  
+    spot            = true
+
 
     oauth_scopes = [
       "https://www.googleapis.com/auth/cloud-platform"

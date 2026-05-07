@@ -27,7 +27,7 @@ module "gke" {
   node_vm_size  = var.node_vm_size
   vpc_name      = module.networking.vpc_name
   gke_subnet_id = module.networking.gke_subnet_id
-  depends_on = [module.networking]
+  depends_on    = [module.networking]
 }
 # Module 4 — Installe ArgoCD dans le cluster GKE
 module "argocd" {
