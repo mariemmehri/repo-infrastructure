@@ -126,9 +126,12 @@ jobs:
   # ──────────────────────────────────────────────────────────
   phase-a-infra:
     name: Phase A — Infrastructure Staging
-    needs: terraform-validate
+    needs: [terraform-validate, phase-0-backend]
     runs-on: ubuntu-latest
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false
+    if: |
+      always() &&
+      (github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false) &&
+      (needs.phase-0-backend.result == 'success' || needs.phase-0-backend.result == 'skipped')
     defaults:
       run:
         working-directory: environments/staging
