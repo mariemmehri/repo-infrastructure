@@ -51,11 +51,10 @@ env:
 
 # ─────────────────────────────────────────────
 jobs:
-
 # =========================================================
 # 1. VALIDATION
 # =========================================================
-terraform-validate:
+ terraform-validate:
   name: Validate
   runs-on: ubuntu-latest
 
@@ -81,7 +80,7 @@ terraform-validate:
 # =========================================================
 # 2. PHASE A — INFRA (GKE + NETWORK + REGISTRY + ARGOCD)
 # =========================================================
-phase-a-infra:
+ phase-a-infra:
   name: Phase A — Infra
   needs: terraform-validate
   runs-on: ubuntu-latest
@@ -151,7 +150,7 @@ phase-a-infra:
 # =========================================================
 # 3. PHASE B — GITOPS BOOTSTRAP
 # =========================================================
-phase-b-gitops:
+ phase-b-gitops:
   name: Phase B — GitOps
   needs: phase-a-infra
   runs-on: ubuntu-latest
@@ -211,7 +210,7 @@ phase-b-gitops:
 # =========================================================
 # 4. DESTROY (PROTECTED)
 # =========================================================
-terraform-destroy:
+ terraform-destroy:
   name: Destroy Staging
   runs-on: ubuntu-latest
 
