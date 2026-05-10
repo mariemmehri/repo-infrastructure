@@ -41,7 +41,7 @@ provider "helm" {
 }
 
 provider "kubernetes" {
-  host = module.gke.kube_host
+  host                   = module.gke.kube_host
   cluster_ca_certificate = base64decode(module.gke.kube_cluster_ca_certificate)
 
   exec {

@@ -32,6 +32,6 @@ variable "registry_name" {
 }
 variable "argocd_chart_version" {
   description = "Version du chart Helm ArgoCD"
-    type        = string
-      default     = "6.7.3"
-      }
+  type        = string
+  default     = "6.7.3"
+}
