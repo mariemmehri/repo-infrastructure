@@ -30,3 +30,8 @@ variable "registry_name" {
   description = "Nom du repository Artifact Registry"
   type        = string
 }
+variable "argocd_chart_version" {
+  description = "Version du chart ArgoCD à installer"
+  type        = string
+  default     = "6.7.3"
+}
