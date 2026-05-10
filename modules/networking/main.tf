@@ -1,4 +1,14 @@
+terraform {
+  required_version = ">= 1.7.0"
+  required_providers {
+    google = {
+      source  = "hashicorp/google"
+      version = "~> 5.0"
+    }
+  }
+}
 
+# reste du fichier inchangé...
 resource "google_compute_network" "main" {
   name                    = "vpc-${var.environment}-pfe"
   auto_create_subnetworks = false
