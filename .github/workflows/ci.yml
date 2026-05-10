@@ -9,6 +9,7 @@ on:
       - "environments/**"
       - "modules/**"
       - ".github/workflows/ci.yml"
+      - ".github/workflows/tflint.hcl"
 
   pull_request:
     branches: [main]
