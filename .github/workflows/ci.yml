@@ -8,7 +8,7 @@ on:
       - "bootstrap-gitops/**"
       - "environments/**"
       - "modules/**"
-      - ".github/workflows/ci-terraform.yml"
+      - ".github/workflows/ci.yml"
 
   pull_request:
     branches: [main]
