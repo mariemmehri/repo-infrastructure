@@ -32,11 +32,12 @@ module "gke" {
 # Module 4 — Installe ArgoCD dans le cluster GKE
 module "argocd" {
   source                      = "../../modules/argocd"
-  kube_host                   = module.gke.kube_host
-  kube_client_certificate     = module.gke.kube_client_certificate
-  kube_client_key             = module.gke.kube_client_key
-  kube_cluster_ca_certificate = module.gke.kube_cluster_ca_certificate
+  argocd_chart_version = var.argocd_chart_version
   depends_on                  = [module.gke]
+  # kube_host                   = module.gke.kube_host
+  # kube_client_certificate     = module.gke.kube_client_certificate
+  # kube_client_key             = module.gke.kube_client_key
+  # kube_cluster_ca_certificate = module.gke.kube_cluster_ca_certificate
 }
 # ─── Nouveau — binding terraform-ci peut utiliser le SA GKE ─
 resource "google_service_account_iam_member" "terraform_ci_uses_gke_sa" {

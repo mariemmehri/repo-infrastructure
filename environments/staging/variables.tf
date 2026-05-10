@@ -31,7 +31,7 @@ variable "registry_name" {
   type        = string
 }
 variable "argocd_chart_version" {
-  description = "Version du chart ArgoCD à installer"
-  type        = string
-  default     = "6.7.3"
-}
+  description = "Version du chart Helm ArgoCD"
+    type        = string
+      default     = "6.7.3"
+      }
