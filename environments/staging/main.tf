@@ -36,7 +36,7 @@ module "argocd" {
   kube_client_certificate     = module.gke.kube_client_certificate
   kube_client_key             = module.gke.kube_client_key
   kube_cluster_ca_certificate = module.gke.kube_cluster_ca_certificate
-  depends_on = [module.gke]
+  depends_on                  = [module.gke]
 }
 # ─── Nouveau — binding terraform-ci peut utiliser le SA GKE ─
 resource "google_service_account_iam_member" "terraform_ci_uses_gke_sa" {
