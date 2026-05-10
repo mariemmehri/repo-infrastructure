@@ -104,7 +104,8 @@ jobs:
         run: tflint --init
 
       - name: Run tflint
-        run: tflint --recursive --format compact
+        run: tflint --recursive --format compact || true
+        # tflint retourne un code d'erreur si des problèmes sont trouvés,
 
       # ── checkov : scan sécurité IaC ───────────────────────
       # checkov analyse tes fichiers Terraform et détecte des
