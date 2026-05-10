@@ -14,6 +14,8 @@ terraform {
       version = "~> 2.27"
     }
   }
+  backend "gcs" {}
+
 }
 # Outil pour parler à GCP:crée ressources GCP
 provider "google" {
