@@ -45,7 +45,7 @@ env:
   TF_VERSION: "1.7.5"
   TF_IN_AUTOMATION: "true"
   TF_INPUT: "false"
-  TF_CLI_ARGS: "-no-color"
+  # TF_CLI_ARGS: "-no-color"
   # Chemins des stacks Terraform
   TF_STAGING_DIR: "environments/staging"
   TF_BOOTSTRAP_DIR: "bootstrap-gitops"
@@ -204,6 +204,7 @@ jobs:
         run: |
           set +e
           terraform plan \
+            -no-color \
             -out=tfplan.binary \
             -detailed-exitcode \
             -input=false
@@ -442,7 +443,7 @@ jobs:
           echo ">>> Plan exit code: ${EXITCODE}"
           if [ $EXITCODE -eq 1 ]; then exit 1; fi
           exit 0
-          
+
       - name: Upload plan artifact
         if: steps.plan.outputs.exitcode == '2'
         uses: actions/upload-artifact@v4
