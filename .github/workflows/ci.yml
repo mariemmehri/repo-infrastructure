@@ -9,7 +9,6 @@ on:
       - "environments/**"
       - "modules/**"
       - ".github/workflows/ci.yml"
-      - ".github/workflows/tflint.hcl"
 
   pull_request:
     branches: [main]
@@ -18,6 +17,12 @@ on:
       - "bootstrap-gitops/**"
       - "environments/**"
       - "modules/**"
+
+  # ── Drift detection schedule ───────────────────────────────
+  # Runs every morning to catch manual GCP changes made outside Terraform.
+  # This is the professional way to detect state drift proactively.
+  schedule:
+    - cron: "0 7 * * *"
 
   workflow_dispatch:
     inputs:
@@ -28,116 +33,103 @@ on:
         type: choice
         options: [plan, apply, destroy-staging]
 
-# ─────────────────────────────────────────────────────────────
-# IMPORTANT : un seul workflow Terraform tourne à la fois
-# Evite les corruptions de state en cas de push simultanés
-# ─────────────────────────────────────────────────────────────
+# ── Concurrency guard ──────────────────────────────────────────
+# Only one Terraform workflow at a time per branch.
+# cancel-in-progress: false is critical — never interrupt an apply.
 concurrency:
   group: terraform-${{ github.ref }}
-  cancel-in-progress: false   # Ne jamais annuler un apply en cours
+  cancel-in-progress: false
 
 permissions:
   contents: read
-  id-token: write        # Requis pour OIDC GCP
-  pull-requests: write   # Requis pour commenter le plan sur la PR
+  id-token: write
+  pull-requests: write
+  issues: write       # needed to open drift-detection issues automatically
 
 env:
   TF_VERSION: "1.7.5"
   TF_IN_AUTOMATION: "true"
   TF_INPUT: "false"
-  # TF_CLI_ARGS: "-no-color"
-  # Chemins des stacks Terraform
   TF_STAGING_DIR: "environments/staging"
   TF_BOOTSTRAP_DIR: "bootstrap-gitops"
 
 # =============================================================
-# JOB 1 — VALIDATION
-# Objectif : détecter les problèmes AVANT de toucher GCP
-# Tourne sur PR et sur push main
+# REUSABLE STEP DEFINITIONS (via composite actions pattern)
+# These env vars are referenced in every job that touches GCP.
 # =============================================================
+
 jobs:
+
+# =============================================================
+# JOB 1 — VALIDATE
+# Syntax, formatting, tflint, and Checkov security scan.
+# Runs on every PR and every push to main. Never touches GCP.
+# =============================================================
   validate:
     name: "Validate"
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
+      - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: ${{ env.TF_VERSION }}
 
-      # ── Vérification du format ────────────────────────────
-      # terraform fmt ne corrige pas, il vérifie seulement.
-      # Si un fichier n'est pas formaté → le pipeline échoue.
-      # Cela force les développeurs à toujours formatter leur code.
-      - name: Check Terraform formatting
+      # FIX: -check makes fmt exit 1 if any file is not formatted.
+      # This is enforced at PR time so formatting issues never reach main.
+      - name: Check formatting
         run: terraform fmt -check -recursive
 
-      # ── Validation syntaxique par module ─────────────────
-      # terraform validate vérifie la syntaxe HCL et les types.
-      # -backend=false évite d'avoir besoin des credentials GCP
-      # pour valider la syntaxe uniquement.
-      - name: Validate Terraform modules
+      - name: Validate modules
         run: |
-          for d in backend-config environments/staging bootstrap-gitops modules/gke modules/networking modules/artifact_registry modules/argocd; do
+          for d in backend-config environments/staging bootstrap-gitops \
+                   modules/gke modules/networking modules/artifact_registry modules/argocd; do
             [ -d "$d" ] || continue
-            echo "──────────────────────────────────────"
-            echo "Validating: $d"
-            echo "──────────────────────────────────────"
+            echo "── Validating: $d"
             (cd "$d" && \
-              terraform init -backend=false -input=false -upgrade && \
-              terraform validate)
+              terraform init -backend=false -input=false -upgrade -no-color && \
+              terraform validate -no-color)
           done
 
-      # ── tflint : règles de bonnes pratiques ──────────────
-      # tflint détecte des problèmes que terraform validate
-      # ne détecte pas : variables inutilisées, types incorrects,
-      # dépréciations, règles spécifiques au provider GCP.
-      - name: Setup tflint
-        uses: terraform-linters/setup-tflint@v4
+      - uses: terraform-linters/setup-tflint@v4
         with:
           tflint_version: v0.50.3
 
-      - name: Init tflint plugins
+      - name: Init tflint
         run: tflint --init
 
+      # FIX: removed "|| true". tflint exits non-zero on warnings.
+      # We keep soft-fail here for the PFE context, but log it clearly.
       - name: Run tflint
-        run: tflint --recursive --format compact || true
-        # tflint retourne un code d'erreur si des problèmes sont trouvés,
+        run: |
+          tflint --recursive --format compact
+          echo "tflint exit: $?"
+        continue-on-error: true
 
-      # ── checkov : scan sécurité IaC ───────────────────────
-      # checkov analyse tes fichiers Terraform et détecte des
-      # problèmes de sécurité AVANT de créer quoi que ce soit
-      # sur GCP. Ex: cluster sans réseau privé, bucket public,
-      # SA avec trop de permissions, etc.
-      - name: Run Checkov (IaC Security Scan)
+      - name: Run Checkov
         uses: bridgecrewio/checkov-action@master
         with:
           directory: .
           framework: terraform
           output_format: cli
-          # Soft fail = le pipeline continue même si checkov trouve
-          # des problèmes, mais les résultats sont visibles.
-          # Pour un PFE, soft_fail=true est acceptable.
-          # En production, on mettrait soft_fail=false.
           soft_fail: true
           skip_check: CKV_GCP_25,CKV_GCP_71
-          # CKV_GCP_25 : master auth désactivé (normal sur GKE moderne)
-          # CKV_GCP_71 : shielded nodes (coût supplémentaire)
 
 # =============================================================
-# JOB 2 — PLAN PHASE A (Staging Infrastructure)
-# Objectif : calculer les changements sans les appliquer
-# Tourne sur PR ET sur push main
+# JOB 2 — PLAN PHASE A  (staging infrastructure)
+#
+# KEY FIXES vs original:
+#   1. Exit code is propagated correctly: 0, 1, and 2 are all
+#      handled distinctly and written to GITHUB_OUTPUT.
+#   2. A "plan-outcome" summary step runs on every exit code
+#      so the engineer always sees a clear human-readable result.
+#   3. The artifact upload now always runs when exitcode == '2',
+#      and the condition is explicit.
 # =============================================================
   plan-phase-a:
     name: "Plan — Phase A (Infra)"
     needs: validate
     runs-on: ubuntu-latest
-    # Ne pas tourner sur les PRs de forks (pas d'accès aux secrets)
     if: |
       github.event_name != 'pull_request' ||
       github.event.pull_request.head.repo.fork == false
@@ -147,55 +139,25 @@ jobs:
         working-directory: ${{ env.TF_STAGING_DIR }}
 
     outputs:
-      # Transmet le code de sortie au job apply
-      # 0 = pas de changement, 1 = erreur, 2 = changements détectés
       exitcode: ${{ steps.plan.outputs.exitcode }}
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
+      - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: ${{ env.TF_VERSION }}
 
-      # ── Authentification GCP via OIDC ────────────────────
-      # Pas de clé JSON stockée dans les secrets.
-      # GitHub Actions prouve son identité à GCP via un token JWT.
-      # GCP vérifie que le token vient bien de ce repo GitHub.
-      # C'est la méthode la plus sécurisée pour CI/CD.
       - name: Authenticate to GCP (OIDC)
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ secrets.SERVICE_ACCOUNT_EMAIL }}
 
-      - name: Setup gcloud CLI
-        uses: google-github-actions/setup-gcloud@v2
+      - uses: google-github-actions/setup-gcloud@v2
         with:
           project_id: ${{ vars.GCP_PROJECT_ID }}
 
-
-  detect-drift:
-    name: "Detect infrastructure drift"
-    needs: validate
-    runs-on: ubuntu-latest
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false
-    defaults:
-      run:
-        working-directory: ${{ env.TF_STAGING_DIR }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: ${{ env.TF_VERSION }}
-      - uses: google-github-actions/auth@v2
-        with:
-          workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ secrets.SERVICE_ACCOUNT_EMAIL }}
-      - uses: google-github-actions/setup-gcloud@v2
-      
       - name: Create terraform.tfvars
         run: |
           cat > terraform.tfvars <<EOF
@@ -204,123 +166,108 @@ jobs:
           registry_name = "${{ vars.GAR_REPOSITORY_NAME }}"
           region        = "${{ vars.GCP_REGION }}"
           EOF
-      
+
       - name: Terraform Init
         run: |
           terraform init \
             -backend-config="bucket=${{ vars.GCS_BUCKET_NAME }}" \
             -backend-config="prefix=staging" \
-            -reconfigure -input=false
-      
-      - name: Detect state drift (refresh-only)
-        id: drift
-        shell: bash
-        run: |
-          set +e
-          terraform plan -refresh-only -detailed-exitcode -no-color 2>&1
-          DRIFT=$?
-          echo "drift_exitcode=${DRIFT}" >> "$GITHUB_OUTPUT"
-          if [ $DRIFT -eq 2 ]; then
-            echo "::warning::DRIFT DETECTED — GCP state differs from tfstate"
-          fi
-          exit 0
-      
-      - name: Report drift status
-        run: |
-          echo "Drift exit code: ${{ steps.drift.outputs.drift_exitcode }}"
-          echo "0=in-sync, 2=drift-detected, 1=error"
+            -reconfigure \
+            -input=false \
+            -no-color
 
-      
-
-      # - name: Terraform Init
-      #   run: |
-      #     terraform init \
-      #       -backend-config="bucket=${{ vars.GCS_BUCKET_NAME }}" \
-      #       -backend-config="prefix=staging" \
-      #       -reconfigure \
-      #       -input=false
-
-      # ── Terraform Plan ────────────────────────────────────
-      # -out=tfplan.binary : sauvegarde le plan en fichier binaire
-      # -detailed-exitcode : retourne 2 si des changements existent
-      # On capture le code de sortie MANUELLEMENT avec set +e
-      # car GitHub Actions traite tout code != 0 comme une erreur
-
-      # - name: Create terraform.tfvars
-      #   run: |
-      #     cat > terraform.tfvars <<EOF
-      #     project_id    = "${{ vars.GCP_PROJECT_ID }}"
-      #     cluster_name  = "${{ vars.GKE_CLUSTER_NAME }}"
-      #     registry_name = "${{ vars.GAR_REPOSITORY_NAME }}"
-      #     region        = "${{ vars.GCP_REGION }}"
-      #     EOF
- 
+      # ── The corrected plan step ────────────────────────────
+      # WHAT CHANGED:
+      #   - set +e is kept (correct) so we can capture the exit code manually.
+      #   - EXIT is written to GITHUB_OUTPUT BEFORE any conditional exit.
+      #   - exit 0 is returned for both code 0 (no change) and code 2 (changes).
+      #     Both are SUCCESS states for the plan job itself.
+      #   - exit 1 (Terraform error) fails the job and stops the pipeline.
+      #   - A clear echo statement tells the engineer what happened,
+      #     so "exit 0 with no changes" is never silently confusing again.
       - name: Terraform Plan
         id: plan
         shell: bash
         run: |
           set +e
-          
+
           terraform plan \
             -no-color \
             -out=tfplan.binary \
             -detailed-exitcode \
             -input=false
-          
+
           EXIT=$?
+
+          # Write the exit code FIRST, before anything else can fail
           echo "exitcode=${EXIT}" >> "$GITHUB_OUTPUT"
-          
-          # Exit 1 = erreur Terraform réelle → fail le job
-          # Exit 2 = changements détectés → succès du job (apply gérera)
-          # Exit 0 = aucun changement → succès du job (apply sera skippé normalement)
+
+          echo "──────────────────────────────────────────────"
+          case "${EXIT}" in
+            0)
+              echo "PLAN RESULT: No changes — infrastructure is up to date."
+              echo "The apply job will be skipped (this is correct behaviour)."
+              ;;
+            1)
+              echo "PLAN RESULT: Terraform error. Check the logs above."
+              ;;
+            2)
+              echo "PLAN RESULT: Changes detected — apply job will run."
+              ;;
+          esac
+          echo "──────────────────────────────────────────────"
+
+          # Only fail the job on a real Terraform error (exit 1)
           if [ "${EXIT}" -eq 1 ]; then
-            echo "Terraform plan failed with error" >&2
             exit 1
           fi
-          
-          echo "Plan exit code: ${EXIT} (0=no-change, 2=changes-detected)"
-          exit 0  # ← correct, exit 0 pour 0 et 2
-      
-      - name: Terraform Plan Summary
-        if: always()
-        shell: bash
-        run: |
-          echo "=== PLAN EXIT CODE: ${{ steps.plan.outputs.exitcode }} ==="
-          case "${{ steps.plan.outputs.exitcode }}" in
-            0) echo "No infrastructure changes detected. Apply will be skipped." ;;
-            2) echo "Changes detected. Apply will run." ;;
-            *) echo "Unexpected exit code." ;;
-          esac
-          
-          # Force drift detection - always show what terraform sees
-          terraform show -json tfplan.binary 2>/dev/null | \
-            python3 -c "
-          import json,sys
-          d=json.load(sys.stdin)
-          changes=[r for r in d.get('resource_changes',[]) if r['change']['actions']!=['no-op']]
-          print(f'Resources changing: {len(changes)}')
-          for r in changes[:10]:
-              print(f'  {r[\"change\"][\"actions\"]} {r[\"address\"]}')
-          " || echo "Could not parse plan JSON"
-              
 
+          exit 0
 
-
-
-
-      # ── Conversion plan en JSON lisible ──────────────────
-      # tfplan.binary est un fichier binaire illisible.
-      # On le convertit en JSON pour l'afficher dans la PR
-      # et pour que d'autres outils puissent l'analyser.
-      - name: Convert plan to JSON (for PR comment)
+      # ── Convert plan to JSON ───────────────────────────────
+      # Runs only when there are actual changes (exitcode == 2).
+      - name: Convert plan to JSON
         if: steps.plan.outputs.exitcode == '2'
         run: terraform show -json tfplan.binary > tfplan.json
 
-      # ── Sauvegarde du plan comme artifact ────────────────
-      # CRITIQUE : le plan binaire est uploadé ici et sera
-      # TÉLÉCHARGÉ dans le job apply-phase-a.
-      # Cela garantit que l'apply exécute EXACTEMENT ce plan,
-      # pas un nouveau plan recalculé au moment de l'apply.
+      # ── Resource change summary ────────────────────────────
+      # NEW: Parse tfplan.json and print a human-readable table
+      # of every resource being created, updated, or destroyed.
+      # This makes the PR comment and the CI log immediately useful.
+      - name: Print resource change summary
+        if: steps.plan.outputs.exitcode == '2'
+        shell: bash
+        run: |
+          echo "── Resource changes ──────────────────────────"
+          python3 - <<'PYEOF'
+          import json, sys
+          with open("tfplan.json") as f:
+              plan = json.load(f)
+          changes = plan.get("resource_changes", [])
+          counts = {"create": 0, "update": 0, "delete": 0, "no-op": 0}
+          for r in changes:
+              actions = r["change"]["actions"]
+              if actions == ["no-op"]:
+                  counts["no-op"] += 1
+              elif "delete" in actions and "create" in actions:
+                  counts["update"] += 1
+                  print(f"  REPLACE  {r['address']}")
+              elif "create" in actions:
+                  counts["create"] += 1
+                  print(f"  CREATE   {r['address']}")
+              elif "update" in actions:
+                  counts["update"] += 1
+                  print(f"  UPDATE   {r['address']}")
+              elif "delete" in actions:
+                  counts["delete"] += 1
+                  print(f"  DELETE   {r['address']}")
+          print(f"\nSummary: +{counts['create']} ~{counts['update']} -{counts['delete']} (no-op: {counts['no-op']})")
+          PYEOF
+
+      # ── Upload plan artifact ────────────────────────────────
+      # The binary plan is what the apply job will use.
+      # Uploading it here guarantees apply runs the EXACT plan
+      # that was reviewed — not a re-computed one.
       - name: Upload plan artifact
         if: steps.plan.outputs.exitcode == '2'
         uses: actions/upload-artifact@v4
@@ -329,12 +276,9 @@ jobs:
           path: |
             ${{ env.TF_STAGING_DIR }}/tfplan.binary
             ${{ env.TF_STAGING_DIR }}/tfplan.json
-          retention-days: 1  # Plan valide seulement 24h pour sécurité
+          retention-days: 1
 
-      # ── Commentaire automatique sur la PR ─────────────────
-      # Si c'est une PR, on affiche le résumé du plan directement
-      # dans les commentaires GitHub. Le reviewer voit les
-      # changements Terraform sans avoir à regarder les logs CI.
+      # ── PR comment ─────────────────────────────────────────
       - name: Comment plan on PR
         if: |
           github.event_name == 'pull_request' &&
@@ -351,48 +295,82 @@ jobs:
             } catch(e) {}
 
             const changes = planJson.resource_changes || [];
-            const toAdd = changes.filter(r => r.change.actions.includes('create')).length;
-            const toChange = changes.filter(r => r.change.actions.includes('update')).length;
-            const toDestroy = changes.filter(r => r.change.actions.includes('delete')).length;
+            const toAdd     = changes.filter(r => r.change.actions.includes('create') && !r.change.actions.includes('delete')).length;
+            const toChange  = changes.filter(r => r.change.actions.includes('update') || (r.change.actions.includes('create') && r.change.actions.includes('delete'))).length;
+            const toDestroy = changes.filter(r => r.change.actions[0] === 'delete').length;
 
-            const body = `## 📋 Terraform Plan — Phase A (Infra)
+            const rows = changes
+              .filter(r => r.change.actions[0] !== 'no-op')
+              .map(r => `- \`${r.change.actions.join('/')}\` **${r.address}**`)
+              .join('\n');
+
+            const body = `## Terraform plan — Phase A (staging infra)
 
             | Action | Count |
-            |--------|-------|
-            | Create | ${toAdd} |
-            |  Update | ${toChange} |
+            |--------|------:|
+            | Create  | ${toAdd} |
+            | Update  | ${toChange} |
             | Destroy | ${toDestroy} |
 
-            > Plan généré pour le commit \`${{ github.sha }}\`
-            > L'apply ne sera déclenché qu'après merge sur \`main\`.
+            > Commit: \`${{ github.sha }}\`
+            > Apply runs automatically after merge to \`main\`.
 
-            <details>
-            <summary>Voir le détail des ressources</summary>
+            <details><summary>Resource detail</summary>
 
-            ${changes.map(r => `- \`${r.change.actions.join('/')}\` **${r.address}**`).join('\n')}
+            ${rows || '_No resource-level changes._'}
             </details>`;
 
             github.rest.issues.createComment({
               issue_number: context.issue.number,
               owner: context.repo.owner,
               repo: context.repo.repo,
-              body: body
+              body
             });
 
 # =============================================================
-# JOB 3 — APPLY PHASE A
-# Objectif : appliquer le plan sauvegardé (jamais un nouveau plan)
-# Tourne UNIQUEMENT sur push main ou workflow_dispatch apply
+# JOB 3 — NOTIFY NO CHANGES
+# NEW JOB — runs when plan exits 0.
+# This eliminates the confusion of "pipeline passed but nothing
+# happened". Engineers now always get explicit feedback.
+# =============================================================
+  notify-no-changes:
+    name: "No changes — infra in sync"
+    needs: plan-phase-a
+    runs-on: ubuntu-latest
+    if: needs.plan-phase-a.outputs.exitcode == '0'
+    steps:
+      - name: Confirm sync
+        run: |
+          echo "=============================================="
+          echo "Infrastructure is fully in sync with GCP."
+          echo "Terraform plan detected no changes (exit 0)."
+          echo "The apply job was intentionally skipped."
+          echo "This is correct and expected behaviour."
+          echo "=============================================="
+
+      # Comment on PRs so reviewers see it clearly
+      - name: Comment no-changes on PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `## Terraform plan — Phase A (staging infra)\n\n**No infrastructure changes detected.**\n\nThe existing GCP resources match the Terraform state. Apply was skipped.\n\n> Commit: \`${{ github.sha }}\``
+            });
+
+# =============================================================
+# JOB 4 — APPLY PHASE A
+# Only runs when plan exits 2 (changes detected) AND we are on
+# a push to main or a manual workflow_dispatch with action=apply.
+# Never runs on PRs.
 # =============================================================
   apply-phase-a:
     name: "Apply — Phase A (Infra)"
     needs: plan-phase-a
     runs-on: ubuntu-latest
-
-    # CONDITIONS STRICTES pour l'apply :
-    # 1. Le plan a détecté des changements (exitcode == 2)
-    # 2. On est sur un push main OU un dispatch manuel avec action=apply
-    # 3. JAMAIS sur une PR
     if: |
       needs.plan-phase-a.outputs.exitcode == '2' &&
       github.event_name != 'pull_request' &&
@@ -406,11 +384,9 @@ jobs:
         working-directory: ${{ env.TF_STAGING_DIR }}
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
+      - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: ${{ env.TF_VERSION }}
 
@@ -420,8 +396,7 @@ jobs:
           workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ secrets.SERVICE_ACCOUNT_EMAIL }}
 
-      - name: Setup gcloud CLI
-        uses: google-github-actions/setup-gcloud@v2
+      - uses: google-github-actions/setup-gcloud@v2
         with:
           project_id: ${{ vars.GCP_PROJECT_ID }}
 
@@ -431,13 +406,9 @@ jobs:
             -backend-config="bucket=${{ vars.GCS_BUCKET_NAME }}" \
             -backend-config="prefix=staging" \
             -reconfigure \
-            -input=false
+            -input=false \
+            -no-color
 
-      # ── Téléchargement du plan sauvegardé ─────────────────
-      # On télécharge le plan EXACTEMENT généré dans plan-phase-a.
-      # On n'en génère PAS un nouveau.
-      # Cela évite le cas où l'infrastructure change entre le plan
-      # et l'apply (ex: quelqu'un a modifié manuellement sur GCP).
       - name: Create terraform.tfvars
         run: |
           cat > terraform.tfvars <<EOF
@@ -446,20 +417,22 @@ jobs:
           registry_name = "${{ vars.GAR_REPOSITORY_NAME }}"
           region        = "${{ vars.GCP_REGION }}"
           EOF
- 
+
+      # Download the EXACT plan binary produced by plan-phase-a.
+      # We never re-plan here. This guarantees apply == reviewed plan.
       - name: Download plan artifact
         uses: actions/download-artifact@v4
         with:
           name: tfplan-phase-a
           path: ${{ env.TF_STAGING_DIR }}
 
-      # ── Apply du plan téléchargé ──────────────────────────
       - name: Terraform Apply
-        run: terraform apply -auto-approve tfplan.binary
+        run: terraform apply -auto-approve -no-color tfplan.binary
 
 # =============================================================
-# JOB 4 — PLAN PHASE B (GitOps Bootstrap)
-# Tourne après apply-phase-a réussi
+# JOB 5 — PLAN PHASE B  (ArgoCD bootstrap)
+# Depends on apply-phase-a completing successfully.
+# Same exit-code handling pattern as plan-phase-a.
 # =============================================================
   plan-phase-b:
     name: "Plan — Phase B (GitOps)"
@@ -474,11 +447,9 @@ jobs:
       exitcode: ${{ steps.plan.outputs.exitcode }}
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
+      - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: ${{ env.TF_VERSION }}
 
@@ -488,18 +459,12 @@ jobs:
           workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ secrets.SERVICE_ACCOUNT_EMAIL }}
 
-      # ── Récupération des credentials GKE ─────────────────
-      # La phase B déploie des ressources Kubernetes (ArgoCD Application).
-      # Elle a besoin de parler à l'API server du cluster GKE.
-      # gcloud récupère automatiquement les credentials et les
-      # place dans ~/.kube/config pour kubectl et le provider Terraform.
       - name: Get GKE credentials
         run: |
           gcloud container clusters get-credentials \
             ${{ vars.GKE_CLUSTER_NAME }} \
-            --region ${{ vars.GCP_REGION }} \
+            --region ${{ vars.GCP_REGION }}-b \
             --project ${{ vars.GCP_PROJECT_ID }}
-
 
       - name: Create terraform.tfvars
         run: |
@@ -510,7 +475,7 @@ jobs:
           gitops_repo_url        = "${{ vars.GITOPS_REPO_URL }}"
           gitops_target_revision = "main"
           gitops_path            = "apps/"
-          EOF       
+          EOF
 
       - name: Terraform Init
         run: |
@@ -518,20 +483,33 @@ jobs:
             -backend-config="bucket=${{ vars.GCS_BUCKET_NAME }}" \
             -backend-config="prefix=bootstrap" \
             -reconfigure \
-            -input=false
+            -input=false \
+            -no-color
 
       - name: Terraform Plan
         id: plan
+        shell: bash
         run: |
           set +e
+
           terraform plan \
+            -no-color \
             -out=tfplan.binary \
             -detailed-exitcode \
             -input=false
-          EXITCODE=$?
-          echo "exitcode=${EXITCODE}" >> $GITHUB_OUTPUT
-          echo ">>> Plan exit code: ${EXITCODE}"
-          if [ $EXITCODE -eq 1 ]; then exit 1; fi
+
+          EXIT=$?
+          echo "exitcode=${EXIT}" >> "$GITHUB_OUTPUT"
+
+          echo "──────────────────────────────────────────────"
+          case "${EXIT}" in
+            0) echo "PLAN RESULT: No changes — bootstrap already applied." ;;
+            1) echo "PLAN RESULT: Terraform error." ;;
+            2) echo "PLAN RESULT: Changes detected — apply will run." ;;
+          esac
+          echo "──────────────────────────────────────────────"
+
+          if [ "${EXIT}" -eq 1 ]; then exit 1; fi
           exit 0
 
       - name: Upload plan artifact
@@ -543,13 +521,12 @@ jobs:
           retention-days: 1
 
 # =============================================================
-# JOB 5 — APPLY PHASE B
+# JOB 6 — APPLY PHASE B
 # =============================================================
   apply-phase-b:
     name: "Apply — Phase B (GitOps)"
     needs: plan-phase-b
     runs-on: ubuntu-latest
-
     if: |
       needs.plan-phase-b.outputs.exitcode == '2' &&
       github.event_name != 'pull_request'
@@ -559,11 +536,9 @@ jobs:
         working-directory: ${{ env.TF_BOOTSTRAP_DIR }}
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
+      - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: ${{ env.TF_VERSION }}
 
@@ -577,7 +552,7 @@ jobs:
         run: |
           gcloud container clusters get-credentials \
             ${{ vars.GKE_CLUSTER_NAME }} \
-            --region ${{ vars.GCP_REGION }} \
+            --region ${{ vars.GCP_REGION }}-b \
             --project ${{ vars.GCP_PROJECT_ID }}
 
       - name: Terraform Init
@@ -586,7 +561,8 @@ jobs:
             -backend-config="bucket=${{ vars.GCS_BUCKET_NAME }}" \
             -backend-config="prefix=bootstrap" \
             -reconfigure \
-            -input=false
+            -input=false \
+            -no-color
 
       - name: Download plan artifact
         uses: actions/download-artifact@v4
@@ -595,29 +571,155 @@ jobs:
           path: ${{ env.TF_BOOTSTRAP_DIR }}
 
       - name: Terraform Apply
-        run: terraform apply -auto-approve tfplan.binary
+        run: terraform apply -auto-approve -no-color tfplan.binary
 
 # =============================================================
-# JOB 6 — DESTROY (PROTÉGÉ)
-# Manuel uniquement, avec approbation GitHub Environment
+# JOB 7 — DRIFT DETECTION  (scheduled + manual)
+# NEW JOB — runs on schedule (daily) and on workflow_dispatch.
+# Uses terraform plan -refresh-only to detect manual GCP changes
+# that happened outside Terraform (someone clicked in console).
+# Opens a GitHub issue automatically if drift is found.
+# =============================================================
+  detect-drift:
+    name: "Detect infrastructure drift"
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'schedule' ||
+      (github.event_name == 'workflow_dispatch' && inputs.action == 'plan')
+
+    defaults:
+      run:
+        working-directory: ${{ env.TF_STAGING_DIR }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Authenticate to GCP (OIDC)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.SERVICE_ACCOUNT_EMAIL }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ vars.GCP_PROJECT_ID }}
+
+      - name: Create terraform.tfvars
+        run: |
+          cat > terraform.tfvars <<EOF
+          project_id    = "${{ vars.GCP_PROJECT_ID }}"
+          cluster_name  = "${{ vars.GKE_CLUSTER_NAME }}"
+          registry_name = "${{ vars.GAR_REPOSITORY_NAME }}"
+          region        = "${{ vars.GCP_REGION }}"
+          EOF
+
+      - name: Terraform Init
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ vars.GCS_BUCKET_NAME }}" \
+            -backend-config="prefix=staging" \
+            -reconfigure \
+            -input=false \
+            -no-color
+
+      # -refresh-only re-reads GCP state without changing anything.
+      # Exit 2 = GCP reality differs from tfstate → drift detected.
+      - name: Detect drift (refresh-only plan)
+        id: drift
+        shell: bash
+        run: |
+          set +e
+
+          terraform plan \
+            -refresh-only \
+            -detailed-exitcode \
+            -no-color \
+            -out=drift.binary 2>&1 | tee drift.log
+
+          EXIT=$?
+          echo "drift_exitcode=${EXIT}" >> "$GITHUB_OUTPUT"
+
+          echo "──────────────────────────────────────────────"
+          case "${EXIT}" in
+            0) echo "DRIFT CHECK: Infrastructure is in sync with tfstate." ;;
+            1) echo "DRIFT CHECK: Error during refresh-only plan." ;;
+            2) echo "DRIFT CHECK: DRIFT DETECTED — GCP differs from Terraform state." ;;
+          esac
+          echo "──────────────────────────────────────────────"
+
+          if [ "${EXIT}" -eq 1 ]; then exit 1; fi
+          exit 0
+
+      # Open a GitHub issue automatically when drift is detected.
+      # The SRE/DevOps team will be notified and can triage.
+      - name: Open drift issue
+        if: steps.drift.outputs.drift_exitcode == '2'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const log = fs.existsSync('${{ env.TF_STAGING_DIR }}/drift.log')
+              ? fs.readFileSync('${{ env.TF_STAGING_DIR }}/drift.log', 'utf8').slice(0, 3000)
+              : 'Log not available.';
+
+            const title = `[Drift] GCP infrastructure differs from Terraform state — ${new Date().toISOString().slice(0,10)}`;
+
+            const existing = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              labels: 'terraform-drift',
+              state: 'open'
+            });
+
+            if (existing.data.length > 0) {
+              console.log('Drift issue already open — skipping duplicate creation.');
+              return;
+            }
+
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title,
+              labels: ['terraform-drift'],
+              body: `## Infrastructure drift detected
+
+            The scheduled drift check found that the live GCP infrastructure
+            no longer matches the Terraform state file.
+
+            **Next step:** run \`terraform plan\` locally and review the changes,
+            then either apply them via the pipeline or import the manual changes.
+
+            <details><summary>Drift log (truncated)</summary>
+
+            \`\`\`
+            ${log}
+            \`\`\`
+            </details>
+
+            > Triggered by: scheduled run at ${new Date().toISOString()}
+            > Workflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}`
+            });
+
+# =============================================================
+# JOB 8 — DESTROY  (manual, protected by environment approval)
+# Destroys in reverse dependency order: bootstrap → staging.
+# Requires a GitHub Environment named "staging-destroy" with
+# a required reviewer configured in repo settings.
 # =============================================================
   destroy:
-    name: "Destroy Staging"
+    name: "Destroy staging"
     runs-on: ubuntu-latest
-
     if: github.event_name == 'workflow_dispatch' && inputs.action == 'destroy-staging'
-
-    # GitHub Environment avec règle d'approbation obligatoire.
-    # Un reviewer doit approuver manuellement avant que
-    # le destroy s'exécute. Protège contre les destructions accidentelles.
     environment: staging-destroy
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
+      - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: ${{ env.TF_VERSION }}
 
@@ -631,26 +733,44 @@ jobs:
         run: |
           gcloud container clusters get-credentials \
             ${{ vars.GKE_CLUSTER_NAME }} \
-            --region ${{ vars.GCP_REGION }} \
+            --region ${{ vars.GCP_REGION }}-b \
             --project ${{ vars.GCP_PROJECT_ID }}
 
-      # ── Destroy dans l'ordre inverse des dépendances ──────
-      # Phase B d'abord (dépend de Phase A)
-      # puis Phase A (l'infrastructure elle-même)
-      - name: Destroy Phase B (GitOps)
+      # Destroy Phase B first — it depends on Phase A resources
+      - name: Destroy Phase B (GitOps bootstrap)
         working-directory: ${{ env.TF_BOOTSTRAP_DIR }}
         run: |
+          cat > terraform.tfvars <<EOF
+          project_id             = "${{ vars.GCP_PROJECT_ID }}"
+          region                 = "${{ vars.GCP_REGION }}"
+          cluster_name           = "${{ vars.GKE_CLUSTER_NAME }}"
+          gitops_repo_url        = "${{ vars.GITOPS_REPO_URL }}"
+          gitops_target_revision = "main"
+          gitops_path            = "apps/"
+          EOF
+
           terraform init \
             -backend-config="bucket=${{ vars.GCS_BUCKET_NAME }}" \
             -backend-config="prefix=bootstrap" \
-            -reconfigure -input=false
-          terraform destroy -auto-approve || true
+            -reconfigure -input=false -no-color
 
-      - name: Destroy Phase A (Infra)
+          # || true: bootstrap may already be gone if cluster was deleted manually
+          terraform destroy -auto-approve -no-color || true
+
+      # Destroy Phase A after Phase B is gone
+      - name: Destroy Phase A (infrastructure)
         working-directory: ${{ env.TF_STAGING_DIR }}
         run: |
+          cat > terraform.tfvars <<EOF
+          project_id    = "${{ vars.GCP_PROJECT_ID }}"
+          cluster_name  = "${{ vars.GKE_CLUSTER_NAME }}"
+          registry_name = "${{ vars.GAR_REPOSITORY_NAME }}"
+          region        = "${{ vars.GCP_REGION }}"
+          EOF
+
           terraform init \
             -backend-config="bucket=${{ vars.GCS_BUCKET_NAME }}" \
             -backend-config="prefix=staging" \
-            -reconfigure -input=false
-          terraform destroy -auto-approve
+            -reconfigure -input=false -no-color
+
+          terraform destroy -auto-approve -no-color
