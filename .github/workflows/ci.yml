@@ -176,20 +176,26 @@ jobs:
         with:
           project_id: ${{ vars.GCP_PROJECT_ID }}
 
-      - name: Terraform Init
-        run: |
-          terraform init \
-            -backend-config="bucket=${{ vars.GCS_BUCKET_NAME }}" \
-            -backend-config="prefix=staging" \
-            -reconfigure \
-            -input=false
 
-      # ── Terraform Plan ────────────────────────────────────
-      # -out=tfplan.binary : sauvegarde le plan en fichier binaire
-      # -detailed-exitcode : retourne 2 si des changements existent
-      # On capture le code de sortie MANUELLEMENT avec set +e
-      # car GitHub Actions traite tout code != 0 comme une erreur
-
+  detect-drift:
+    name: "Detect infrastructure drift"
+    needs: validate
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false
+    defaults:
+      run:
+        working-directory: ${{ env.TF_STAGING_DIR }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.SERVICE_ACCOUNT_EMAIL }}
+      - uses: google-github-actions/setup-gcloud@v2
+      
       - name: Create terraform.tfvars
         run: |
           cat > terraform.tfvars <<EOF
@@ -198,28 +204,109 @@ jobs:
           registry_name = "${{ vars.GAR_REPOSITORY_NAME }}"
           region        = "${{ vars.GCP_REGION }}"
           EOF
+      
+      - name: Terraform Init
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ vars.GCS_BUCKET_NAME }}" \
+            -backend-config="prefix=staging" \
+            -reconfigure -input=false
+      
+      - name: Detect state drift (refresh-only)
+        id: drift
+        shell: bash
+        run: |
+          set +e
+          terraform plan -refresh-only -detailed-exitcode -no-color 2>&1
+          DRIFT=$?
+          echo "drift_exitcode=${DRIFT}" >> "$GITHUB_OUTPUT"
+          if [ $DRIFT -eq 2 ]; then
+            echo "::warning::DRIFT DETECTED — GCP state differs from tfstate"
+          fi
+          exit 0
+      
+      - name: Report drift status
+        run: |
+          echo "Drift exit code: ${{ steps.drift.outputs.drift_exitcode }}"
+          echo "0=in-sync, 2=drift-detected, 1=error"
+
+      
+
+      # - name: Terraform Init
+      #   run: |
+      #     terraform init \
+      #       -backend-config="bucket=${{ vars.GCS_BUCKET_NAME }}" \
+      #       -backend-config="prefix=staging" \
+      #       -reconfigure \
+      #       -input=false
+
+      # ── Terraform Plan ────────────────────────────────────
+      # -out=tfplan.binary : sauvegarde le plan en fichier binaire
+      # -detailed-exitcode : retourne 2 si des changements existent
+      # On capture le code de sortie MANUELLEMENT avec set +e
+      # car GitHub Actions traite tout code != 0 comme une erreur
+
+      # - name: Create terraform.tfvars
+      #   run: |
+      #     cat > terraform.tfvars <<EOF
+      #     project_id    = "${{ vars.GCP_PROJECT_ID }}"
+      #     cluster_name  = "${{ vars.GKE_CLUSTER_NAME }}"
+      #     registry_name = "${{ vars.GAR_REPOSITORY_NAME }}"
+      #     region        = "${{ vars.GCP_REGION }}"
+      #     EOF
  
       - name: Terraform Plan
         id: plan
         shell: bash
         run: |
-          set +e 
+          set +e
           
           terraform plan \
             -no-color \
             -out=tfplan.binary \
             -detailed-exitcode \
             -input=false
-
+          
           EXIT=$?
-
-          echo "exitcode=$EXIT" >> "$GITHUB_OUTPUT"
-
-          if [ $EXIT -eq 1 ]; then
+          echo "exitcode=${EXIT}" >> "$GITHUB_OUTPUT"
+          
+          # Exit 1 = erreur Terraform réelle → fail le job
+          # Exit 2 = changements détectés → succès du job (apply gérera)
+          # Exit 0 = aucun changement → succès du job (apply sera skippé normalement)
+          if [ "${EXIT}" -eq 1 ]; then
+            echo "Terraform plan failed with error" >&2
             exit 1
           fi
+          
+          echo "Plan exit code: ${EXIT} (0=no-change, 2=changes-detected)"
+          exit 0  # ← correct, exit 0 pour 0 et 2
+      
+      - name: Terraform Plan Summary
+        if: always()
+        shell: bash
+        run: |
+          echo "=== PLAN EXIT CODE: ${{ steps.plan.outputs.exitcode }} ==="
+          case "${{ steps.plan.outputs.exitcode }}" in
+            0) echo "No infrastructure changes detected. Apply will be skipped." ;;
+            2) echo "Changes detected. Apply will run." ;;
+            *) echo "Unexpected exit code." ;;
+          esac
+          
+          # Force drift detection - always show what terraform sees
+          terraform show -json tfplan.binary 2>/dev/null | \
+            python3 -c "
+          import json,sys
+          d=json.load(sys.stdin)
+          changes=[r for r in d.get('resource_changes',[]) if r['change']['actions']!=['no-op']]
+          print(f'Resources changing: {len(changes)}')
+          for r in changes[:10]:
+              print(f'  {r[\"change\"][\"actions\"]} {r[\"address\"]}')
+          " || echo "Could not parse plan JSON"
+              
 
-          exit 0
+
+
+
 
       # ── Conversion plan en JSON lisible ──────────────────
       # tfplan.binary est un fichier binaire illisible.
