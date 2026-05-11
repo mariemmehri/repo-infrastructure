@@ -192,13 +192,13 @@ jobs:
 
       - name: Create terraform.tfvars
         run: |
-          cat > terraform.tfvars << EOF
+          cat > terraform.tfvars <<EOF
           project_id    = "${{ vars.GCP_PROJECT_ID }}"
           cluster_name  = "${{ vars.GKE_CLUSTER_NAME }}"
           registry_name = "${{ vars.GAR_REPOSITORY_NAME }}"
           region        = "${{ vars.GCP_REGION }}"
           EOF
-
+ 
       - name: Terraform Plan
         id: plan
         run: |
@@ -208,8 +208,9 @@ jobs:
             -detailed-exitcode \
             -input=false
           EXITCODE=$?
+          # Force string output
           echo "exitcode=${EXITCODE}" >> $GITHUB_OUTPUT
-          # Code 1 = erreur réelle → on fait échouer le pipeline
+          echo "Plan exit code: ${EXITCODE}"    # ← log visible pour debug
           if [ $EXITCODE -eq 1 ]; then
             echo "Terraform plan failed with errors"
             exit 1
@@ -346,6 +347,15 @@ jobs:
       # On n'en génère PAS un nouveau.
       # Cela évite le cas où l'infrastructure change entre le plan
       # et l'apply (ex: quelqu'un a modifié manuellement sur GCP).
+      - name: Create terraform.tfvars
+        run: |
+          cat > terraform.tfvars <<EOF
+          project_id    = "${{ vars.GCP_PROJECT_ID }}"
+          cluster_name  = "${{ vars.GKE_CLUSTER_NAME }}"
+          registry_name = "${{ vars.GAR_REPOSITORY_NAME }}"
+          region        = "${{ vars.GCP_REGION }}"
+          EOF
+ 
       - name: Download plan artifact
         uses: actions/download-artifact@v4
         with:
@@ -399,6 +409,18 @@ jobs:
             --region ${{ vars.GCP_REGION }} \
             --project ${{ vars.GCP_PROJECT_ID }}
 
+
+      - name: Create terraform.tfvars
+        run: |
+          cat > terraform.tfvars <<EOF
+          project_id             = "${{ vars.GCP_PROJECT_ID }}"
+          region                 = "${{ vars.GCP_REGION }}"
+          cluster_name           = "${{ vars.GKE_CLUSTER_NAME }}"
+          gitops_repo_url        = "${{ vars.GITOPS_REPO_URL }}"
+          gitops_target_revision = "main"
+          gitops_path            = "apps/"
+          EOF       
+
       - name: Terraform Init
         run: |
           terraform init \
@@ -417,9 +439,10 @@ jobs:
             -input=false
           EXITCODE=$?
           echo "exitcode=${EXITCODE}" >> $GITHUB_OUTPUT
+          echo ">>> Plan exit code: ${EXITCODE}"
           if [ $EXITCODE -eq 1 ]; then exit 1; fi
           exit 0
-
+          
       - name: Upload plan artifact
         if: steps.plan.outputs.exitcode == '2'
         uses: actions/upload-artifact@v4
