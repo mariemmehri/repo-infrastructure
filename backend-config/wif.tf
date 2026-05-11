@@ -22,7 +22,7 @@ data "google_project" "current" {
 # ─── Workload Identity Pool ────────────────────────────────
 resource "google_iam_workload_identity_pool" "github" {
   project                   = data.google_project.current.number
-  workload_identity_pool_id = "github-pool"
+  workload_identity_pool_id = "github-pool-v2"
   display_name              = "GitHub Actions Pool"
   description               = "Pool pour GitHub Actions CI/CD - PFE"
 

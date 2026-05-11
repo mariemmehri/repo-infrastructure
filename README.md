@@ -65,7 +65,7 @@ repo-infrastructure/
 #### Secrets (Settings → Secrets and variables → Actions → Secrets)
 
 - `WORKLOAD_IDENTITY_PROVIDER` — Full WIF provider resource ID
-  - Format: `projects/<PROJECT_NUMBER>/locations/global/workloadIdentityPools/github-pool/providers/github-provider`
+  - Format: `projects/<PROJECT_NUMBER>/locations/global/workloadIdentityPools/github-pool-v2/providers/github-provider`
 - `SERVICE_ACCOUNT_EMAIL` — Terraform service account email
   - Format: `sa-terraform-ci@<PROJECT_ID>.iam.gserviceaccount.com`
 
@@ -262,7 +262,7 @@ terraform apply gke.tfplan
   cd backend-config
   terraform state rm google_iam_workload_identity_pool.github
   terraform import google_iam_workload_identity_pool.github \
-    projects/<PROJECT_NUMBER>/locations/global/workloadIdentityPools/github-pool
+    projects/<PROJECT_NUMBER>/locations/global/workloadIdentityPools/github-pool-v2
   terraform plan
   ```
 

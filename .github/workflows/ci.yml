@@ -203,8 +203,8 @@ jobs:
         id: plan
         shell: bash
         run: |
-          set +e
-
+          set +e 
+          
           terraform plan \
             -no-color \
             -out=tfplan.binary \
