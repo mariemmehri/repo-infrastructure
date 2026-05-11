@@ -211,14 +211,11 @@ jobs:
             -detailed-exitcode \
             -input=false
 
-          PLAN_EXIT_CODE=$?
+          EXIT=$?
 
-          echo "Terraform returned: $PLAN_EXIT_CODE"
+          echo "exitcode=$EXIT" >> "$GITHUB_OUTPUT"
 
-          echo "exitcode=$PLAN_EXIT_CODE" >> "$GITHUB_OUTPUT"
-
-          if [ "$PLAN_EXIT_CODE" -eq 1 ]; then
-            echo "Terraform plan failed"
+          if [ $EXIT -eq 1 ]; then
             exit 1
           fi
 
@@ -329,7 +326,6 @@ jobs:
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: ${{ env.TF_VERSION }}
-          terraform_wrapper: false
 
       - name: Authenticate to GCP (OIDC)
         uses: google-github-actions/auth@v2
