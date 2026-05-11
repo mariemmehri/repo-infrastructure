@@ -189,6 +189,16 @@ jobs:
       # -detailed-exitcode : retourne 2 si des changements existent
       # On capture le code de sortie MANUELLEMENT avec set +e
       # car GitHub Actions traite tout code != 0 comme une erreur
+
+      - name: Create terraform.tfvars
+        run: |
+          cat > terraform.tfvars << EOF
+          project_id    = "${{ vars.GCP_PROJECT_ID }}"
+          cluster_name  = "${{ vars.GKE_CLUSTER_NAME }}"
+          registry_name = "${{ vars.GAR_REPOSITORY_NAME }}"
+          region        = "${{ vars.GCP_REGION }}"
+          EOF
+
       - name: Terraform Plan
         id: plan
         run: |

@@ -1,15 +1,3 @@
-terraform {
-  required_version = ">= 1.7.0"
-  required_providers {
-    google = {
-      source  = "hashicorp/google"
-      version = "~> 5.0"
-    }
-  }
-}
-
-# reste du fichier inchangé...
-
 
 # Service Account dédié pour les nodes GKE
 # Equivalent du SystemAssigned Identity AKS
