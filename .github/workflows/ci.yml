@@ -201,21 +201,27 @@ jobs:
  
       - name: Terraform Plan
         id: plan
+        shell: bash
         run: |
           set +e
+
           terraform plan \
             -no-color \
             -out=tfplan.binary \
             -detailed-exitcode \
             -input=false
-          EXITCODE=$?
-          # Force string output
-          echo "exitcode=${EXITCODE}" >> $GITHUB_OUTPUT
-          echo "Plan exit code: ${EXITCODE}"    # ← log visible pour debug
-          if [ $EXITCODE -eq 1 ]; then
-            echo "Terraform plan failed with errors"
+
+          PLAN_EXIT_CODE=$?
+
+          echo "Terraform returned: $PLAN_EXIT_CODE"
+
+          echo "exitcode=$PLAN_EXIT_CODE" >> "$GITHUB_OUTPUT"
+
+          if [ "$PLAN_EXIT_CODE" -eq 1 ]; then
+            echo "Terraform plan failed"
             exit 1
           fi
+
           exit 0
 
       # ── Conversion plan en JSON lisible ──────────────────
