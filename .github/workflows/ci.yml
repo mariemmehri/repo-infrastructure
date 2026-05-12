@@ -22,7 +22,7 @@ on:
   # Runs every morning to catch manual GCP changes made outside Terraform.
   # This is the professional way to detect state drift proactively.
   schedule:
-    - cron: "0 7 * * *"
+    - cron: "30 13 * * *" #runs daily at 14:30
 
   workflow_dispatch:
     inputs:
@@ -44,7 +44,7 @@ permissions:
   contents: read
   id-token: write
   pull-requests: write
-  issues: write       # needed to open drift-detection issues automatically
+  issues: write # needed to open drift-detection issues automatically
 
 env:
   TF_VERSION: "1.7.5"
@@ -59,12 +59,11 @@ env:
 # =============================================================
 
 jobs:
-
-# =============================================================
-# JOB 1 — VALIDATE
-# Syntax, formatting, tflint, and Checkov security scan.
-# Runs on every PR and every push to main. Never touches GCP.
-# =============================================================
+  # =============================================================
+  # JOB 1 — VALIDATE
+  # Syntax, formatting, tflint, and Checkov security scan.
+  # Runs on every PR and every push to main. Never touches GCP.
+  # =============================================================
   validate:
     name: "Validate"
     runs-on: ubuntu-latest
@@ -74,7 +73,7 @@ jobs:
       - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: ${{ env.TF_VERSION }}
-          terraform_wrapper: false 
+          terraform_wrapper: false
 
       # FIX: -check makes fmt exit 1 if any file is not formatted.
       # This is enforced at PR time so formatting issues never reach main.
@@ -116,17 +115,17 @@ jobs:
           soft_fail: true
           skip_check: CKV_GCP_25,CKV_GCP_71
 
-# =============================================================
-# JOB 2 — PLAN PHASE A  (staging infrastructure)
-#
-# KEY FIXES vs original:
-#   1. Exit code is propagated correctly: 0, 1, and 2 are all
-#      handled distinctly and written to GITHUB_OUTPUT.
-#   2. A "plan-outcome" summary step runs on every exit code
-#      so the engineer always sees a clear human-readable result.
-#   3. The artifact upload now always runs when exitcode == '2',
-#      and the condition is explicit.
-# =============================================================
+  # =============================================================
+  # JOB 2 — PLAN PHASE A  (staging infrastructure)
+  #
+  # KEY FIXES vs original:
+  #   1. Exit code is propagated correctly: 0, 1, and 2 are all
+  #      handled distinctly and written to GITHUB_OUTPUT.
+  #   2. A "plan-outcome" summary step runs on every exit code
+  #      so the engineer always sees a clear human-readable result.
+  #   3. The artifact upload now always runs when exitcode == '2',
+  #      and the condition is explicit.
+  # =============================================================
   plan-phase-a:
     name: "Plan — Phase A (Infra)"
     needs: validate
@@ -203,7 +202,6 @@ jobs:
             -out=tfplan.binary \
             -detailed-exitcode \
             -input=false\
-            -lock=false
           EXIT=$?
 
           # Write the exit code FIRST, before anything else can fail
@@ -334,19 +332,19 @@ jobs:
               body
             });
 
-# =============================================================
-# JOB 3 — NOTIFY NO CHANGES
-# NEW JOB — runs when plan exits 0.
-# This eliminates the confusion of "pipeline passed but nothing
-# happened". Engineers now always get explicit feedback.
-# =============================================================
+  # =============================================================
+  # JOB 3 — NOTIFY NO CHANGES
+  # NEW JOB — runs when plan exits 0.
+  # This eliminates the confusion of "pipeline passed but nothing
+  # happened". Engineers now always get explicit feedback.
+  # =============================================================
 
-# =============================================================
-# JOB 4 — APPLY PHASE A
-# Only runs when plan exits 2 (changes detected) AND we are on
-# a push to main or a manual workflow_dispatch with action=apply.
-# Never runs on PRs.
-# =============================================================
+  # =============================================================
+  # JOB 4 — APPLY PHASE A
+  # Only runs when plan exits 2 (changes detected) AND we are on
+  # a push to main or a manual workflow_dispatch with action=apply.
+  # Never runs on PRs.
+  # =============================================================
   apply-phase-a:
     name: "Apply — Phase A (Infra)"
     needs: plan-phase-a
@@ -410,15 +408,17 @@ jobs:
       - name: Terraform Apply
         run: terraform apply -auto-approve -no-color tfplan.binary
 
-# =============================================================
-# JOB 5 — PLAN PHASE B  (ArgoCD bootstrap)
-# Depends on apply-phase-a completing successfully.
-# Same exit-code handling pattern as plan-phase-a.
-# =============================================================
+  # =============================================================
+  # JOB 5 — PLAN PHASE B  (ArgoCD bootstrap)
+  # CRITICAL FIX: Depends on apply-phase-a (not just plan-phase-a)
+  # because we need the GKE cluster to exist to plan GitOps bootstrap.
+  # Only runs after infrastructure is deployed (never on PR).
+  # =============================================================
   plan-phase-b:
     name: "Plan — Phase B (GitOps)"
-    needs: plan-phase-a
+    needs: [plan-phase-a, apply-phase-a]
     runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request'
 
     defaults:
       run:
@@ -441,14 +441,13 @@ jobs:
           workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ secrets.SERVICE_ACCOUNT_EMAIL }}
 
-          
       - name: Verify cluster exists
         run: |
           gcloud container clusters describe \
             ${{ vars.GKE_CLUSTER_NAME }} \
             --region ${{ vars.GCP_REGION }}-b \
             --project ${{ vars.GCP_PROJECT_ID }}
-      
+
       - name: Get GKE credentials
         run: |
           gcloud container clusters get-credentials \
@@ -510,16 +509,17 @@ jobs:
           path: ${{ env.TF_BOOTSTRAP_DIR }}/tfplan.binary
           retention-days: 1
 
-# =============================================================
-# JOB 6 — APPLY PHASE B
-# =============================================================
+  # =============================================================
+  # JOB 6 — APPLY PHASE B
+  # =============================================================
   apply-phase-b:
     name: "Apply — Phase B (GitOps)"
-    needs: plan-phase-b
+    needs: [plan-phase-b, apply-phase-a]
     runs-on: ubuntu-latest
     if: |
       needs.plan-phase-b.outputs.exitcode == '2' &&
-      github.event_name != 'pull_request'
+      github.event_name != 'pull_request' &&
+      needs.apply-phase-a.result != 'failure'
 
     defaults:
       run:
@@ -564,13 +564,13 @@ jobs:
       - name: Terraform Apply
         run: terraform apply -auto-approve -no-color tfplan.binary
 
-# =============================================================
-# JOB 7 — DRIFT DETECTION  (scheduled + manual)
-# NEW JOB — runs on schedule (daily) and on workflow_dispatch.
-# Uses terraform plan -refresh-only to detect manual GCP changes
-# that happened outside Terraform (someone clicked in console).
-# Opens a GitHub issue automatically if drift is found.
-# =============================================================
+  # =============================================================
+  # JOB 7 — DRIFT DETECTION  (scheduled + manual)
+  # NEW JOB — runs on schedule (daily) and on workflow_dispatch.
+  # Uses terraform plan -refresh-only to detect manual GCP changes
+  # that happened outside Terraform (someone clicked in console).
+  # Opens a GitHub issue automatically if drift is found.
+  # =============================================================
   detect-drift:
     name: "Detect infrastructure drift"
     runs-on: ubuntu-latest
@@ -696,12 +696,12 @@ jobs:
             > Workflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}`
             });
 
-# =============================================================
-# JOB 8 — DESTROY  (manual, protected by environment approval)
-# Destroys in reverse dependency order: bootstrap → staging.
-# Requires a GitHub Environment named "staging-destroy" with
-# a required reviewer configured in repo settings.
-# =============================================================
+  # =============================================================
+  # JOB 8 — DESTROY  (manual, protected by environment approval)
+  # Destroys in reverse dependency order: bootstrap → staging.
+  # Requires a GitHub Environment named "staging-destroy" with
+  # a required reviewer configured in repo settings.
+  # =============================================================
   destroy:
     name: "Destroy staging"
     runs-on: ubuntu-latest
