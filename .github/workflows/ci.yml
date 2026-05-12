@@ -159,6 +159,7 @@ jobs:
           project_id: ${{ vars.GCP_PROJECT_ID }}
 
       - name: Create terraform.tfvars
+        working-directory: ${{ env.TF_STAGING_DIR }}
         run: |
           cat > terraform.tfvars <<EOF
           project_id    = "${{ vars.GCP_PROJECT_ID }}"
@@ -170,6 +171,7 @@ jobs:
           EOF
 
       - name: Terraform Init
+        working-directory: ${{ env.TF_STAGING_DIR }}
         run: |
           terraform init \
             -backend-config="bucket=${{ vars.GCS_BUCKET_NAME }}" \
@@ -190,6 +192,7 @@ jobs:
       - name: Terraform Plan
         id: plan
         shell: bash
+        working-directory: ${{ env.TF_STAGING_DIR }}
         run: |
           set +e
 
