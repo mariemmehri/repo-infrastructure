@@ -201,7 +201,7 @@ jobs:
             -no-color \
             -out=tfplan.binary \
             -detailed-exitcode \
-            -input=false\
+            -input=false
           EXIT=$?
 
           # Write the exit code FIRST, before anything else can fail
@@ -486,7 +486,6 @@ jobs:
             -out=tfplan.binary \
             -detailed-exitcode \
             -input=false
-
           EXIT=$?
           echo "exitcode=${EXIT}" >> "$GITHUB_OUTPUT"
 
