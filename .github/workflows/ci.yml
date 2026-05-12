@@ -74,6 +74,7 @@ jobs:
       - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false 
 
       # FIX: -check makes fmt exit 1 if any file is not formatted.
       # This is enforced at PR time so formatting issues never reach main.
@@ -147,6 +148,7 @@ jobs:
       - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
 
       - name: Authenticate to GCP (OIDC)
         uses: google-github-actions/auth@v2
@@ -393,6 +395,7 @@ jobs:
       - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
 
       - name: Authenticate to GCP (OIDC)
         uses: google-github-actions/auth@v2
