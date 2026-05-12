@@ -165,6 +165,8 @@ jobs:
           cluster_name  = "${{ vars.GKE_CLUSTER_NAME }}"
           registry_name = "${{ vars.GAR_REPOSITORY_NAME }}"
           region        = "${{ vars.GCP_REGION }}"
+          node_count    = ${{ vars.NODE_COUNT }}
+          node_vm_size  = "${{ vars.NODE_VM_SIZE }}"
           EOF
 
       - name: Terraform Init
@@ -196,7 +198,6 @@ jobs:
             -out=tfplan.binary \
             -detailed-exitcode \
             -input=false
-
           EXIT=$?
 
           # Write the exit code FIRST, before anything else can fail
