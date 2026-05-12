@@ -339,33 +339,6 @@ jobs:
 # This eliminates the confusion of "pipeline passed but nothing
 # happened". Engineers now always get explicit feedback.
 # =============================================================
-  notify-no-changes:
-    name: "No changes — infra in sync"
-    needs: plan-phase-a
-    runs-on: ubuntu-latest
-    if: needs.plan-phase-a.outputs.exitcode == '0'
-    steps:
-      - name: Confirm sync
-        run: |
-          echo "=============================================="
-          echo "Infrastructure is fully in sync with GCP."
-          echo "Terraform plan detected no changes (exit 0)."
-          echo "The apply job was intentionally skipped."
-          echo "This is correct and expected behaviour."
-          echo "=============================================="
-
-      # Comment on PRs so reviewers see it clearly
-      - name: Comment no-changes on PR
-        if: github.event_name == 'pull_request'
-        uses: actions/github-script@v7
-        with:
-          script: |
-            github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: `## Terraform plan — Phase A (staging infra)\n\n**No infrastructure changes detected.**\n\nThe existing GCP resources match the Terraform state. Apply was skipped.\n\n> Commit: \`${{ github.sha }}\``
-            });
 
 # =============================================================
 # JOB 4 — APPLY PHASE A
