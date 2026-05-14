@@ -122,6 +122,15 @@ jobs:
           workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ secrets.SERVICE_ACCOUNT_EMAIL }}
 
+
+      - name: Get GKE credentials
+        uses: google-github-actions/get-gke-credentials@v2
+        with:
+          cluster_name: ${{ vars.GKE_CLUSTER_NAME }}
+          location: ${{ vars.GCP_REGION }}
+          project_id: ${{ vars.GCP_PROJECT_ID }}
+
+          
       - uses: google-github-actions/setup-gcloud@v2
         with:
           project_id: ${{ vars.GCP_PROJECT_ID }}
@@ -414,13 +423,6 @@ jobs:
         with:
           workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ secrets.SERVICE_ACCOUNT_EMAIL }}
-      - name: Get GKE credentials
-      
-        uses: google-github-actions/get-gke-credentials@v2
-        with:
-          cluster_name: ${{ vars.GKE_CLUSTER_NAME }}
-          location: ${{ vars.GCP_REGION }}
-          project_id: ${{ vars.GCP_PROJECT_ID }}
 
       - name: Terraform Init
         working-directory: ${{ env.TF_STAGING_DIR }}
