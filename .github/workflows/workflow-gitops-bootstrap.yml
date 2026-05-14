@@ -1,0 +1,218 @@
+name: "GitOps Bootstrap"
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "bootstrap-gitops/**"
+      - ".github/workflows/workflow-gitops-bootstrap.yml"
+
+  workflow_dispatch:
+
+  # Se déclenche quand le workflow infra termine avec succès
+  # Couvre le cas où un nouveau cluster vient d'être créé
+  workflow_run:
+    workflows: ["Terraform Infra"]
+    types: [completed]
+    branches: [main]
+
+concurrency:
+  group: gitops-bootstrap-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  TF_VERSION: "1.7.5"
+  TF_BOOTSTRAP_DIR: "bootstrap-gitops"
+
+jobs:
+  # ─────────────────────────────────────────────────────────
+  # Guard — si déclenché via workflow_run, vérifier que
+  # le workflow infra s'est bien terminé en succès
+  # ─────────────────────────────────────────────────────────
+  check-trigger:
+    name: "Check trigger validity"
+    runs-on: ubuntu-latest
+    outputs:
+      should-run: ${{ steps.check.outputs.should-run }}
+    steps:
+      - name: Evaluate trigger
+        id: check
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_run" ]; then
+            # Ne tourner que si le workflow infra a réussi
+            if [ "${{ github.event.workflow_run.conclusion }}" == "success" ]; then
+              echo "should-run=true" >> "$GITHUB_OUTPUT"
+              echo "Triggered by successful infra run — proceeding."
+            else
+              echo "should-run=false" >> "$GITHUB_OUTPUT"
+              echo "Infra workflow did not succeed — skipping bootstrap."
+            fi
+          else
+            # push direct sur bootstrap-gitops/** ou workflow_dispatch
+            echo "should-run=true" >> "$GITHUB_OUTPUT"
+            echo "Direct trigger — proceeding."
+          fi
+
+  # ─────────────────────────────────────────────────────────
+  # JOB 1 — PLAN BOOTSTRAP
+  # ─────────────────────────────────────────────────────────
+  plan:
+    name: "Plan — GitOps Bootstrap"
+    needs: check-trigger
+    runs-on: ubuntu-latest
+    if: needs.check-trigger.outputs.should-run == 'true'
+
+    defaults:
+      run:
+        working-directory: ${{ env.TF_BOOTSTRAP_DIR }}
+
+    outputs:
+      exitcode: ${{ steps.plan.outputs.exitcode }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.SERVICE_ACCOUNT_EMAIL }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ vars.GCP_PROJECT_ID }}
+
+      - name: Verify cluster exists
+        run: |
+          gcloud container clusters describe \
+            ${{ vars.GKE_CLUSTER_NAME }} \
+            --region ${{ vars.GCP_REGION }}-b \
+            --project ${{ vars.GCP_PROJECT_ID }}
+
+      - name: Get GKE credentials
+        run: |
+          gcloud container clusters get-credentials \
+            ${{ vars.GKE_CLUSTER_NAME }} \
+            --region ${{ vars.GCP_REGION }}-b \
+            --project ${{ vars.GCP_PROJECT_ID }}
+
+      - name: Write terraform.tfvars
+        run: |
+          cat > terraform.tfvars <<EOF
+          project_id             = "${{ vars.GCP_PROJECT_ID }}"
+          region                 = "${{ vars.GCP_REGION }}"
+          cluster_name           = "${{ vars.GKE_CLUSTER_NAME }}"
+          gitops_repo_url        = "${{ vars.GITOPS_REPO_URL }}"
+          gitops_target_revision = "main"
+          gitops_path            = "${{ vars.GITOPS_PATH }}"
+          EOF
+
+      - name: Terraform Init
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ vars.GCS_BUCKET_NAME }}" \
+            -backend-config="prefix=bootstrap" \
+            -reconfigure -input=false -no-color
+
+      - name: Terraform Plan
+        id: plan
+        shell: bash
+        run: |
+          set +e
+
+          terraform plan \
+            -no-color \
+            -out=tfplan.binary \
+            -detailed-exitcode \
+            -input=false
+          EXIT=$?
+
+          echo "exitcode=${EXIT}" >> "$GITHUB_OUTPUT"
+
+          case "${EXIT}" in
+            0) echo " Bootstrap already applied — app-of-apps exists, nothing to do." ;;
+            1) echo " Terraform error." ;;
+            2) echo " Bootstrap needed — app-of-apps will be created." ;;
+          esac
+
+          if [ "${EXIT}" -eq 1 ]; then exit 1; fi
+          exit 0
+
+      - name: Upload plan artifact
+        if: steps.plan.outputs.exitcode == '2'
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfplan-bootstrap
+          path: |
+            ${{ env.TF_BOOTSTRAP_DIR }}/tfplan.binary
+            ${{ env.TF_BOOTSTRAP_DIR }}/terraform.tfvars
+          retention-days: 1
+
+  # ─────────────────────────────────────────────────────────
+  # JOB 2 — APPLY BOOTSTRAP
+  # Ne tourne QUE si exitcode=2 (app-of-apps absent ou modifié)
+  # Dans 95% des cas ce job sera skippé
+  # ─────────────────────────────────────────────────────────
+  apply:
+    name: "Apply — GitOps Bootstrap"
+    needs: plan
+    runs-on: ubuntu-latest
+    if: |
+      needs.plan.outputs.exitcode == '2' &&
+      github.event_name != 'pull_request'
+
+    defaults:
+      run:
+        working-directory: ${{ env.TF_BOOTSTRAP_DIR }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.SERVICE_ACCOUNT_EMAIL }}
+
+      - name: Get GKE credentials
+        run: |
+          gcloud container clusters get-credentials \
+            ${{ vars.GKE_CLUSTER_NAME }} \
+            --region ${{ vars.GCP_REGION }}-b \
+            --project ${{ vars.GCP_PROJECT_ID }}
+
+      - name: Download plan artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: tfplan-bootstrap
+          path: ${{ env.TF_BOOTSTRAP_DIR }}
+
+      - name: Terraform Init
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ vars.GCS_BUCKET_NAME }}" \
+            -backend-config="prefix=bootstrap" \
+            -reconfigure -input=false -no-color
+
+      - name: Terraform Apply
+        run: terraform apply -auto-approve -no-color tfplan.binary
+
+      - name: Verify app-of-apps created
+        run: |
+          kubectl get application app-of-apps -n argocd
+          echo " ArgoCD app-of-apps is live."

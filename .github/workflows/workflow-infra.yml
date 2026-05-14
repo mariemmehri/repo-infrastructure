@@ -1,0 +1,438 @@
+name: "Terraform Infra"
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "environments/**"
+      - "modules/**"
+      - "backend-config/**"
+      - ".github/workflows/workflow-infra.yml"
+
+  pull_request:
+    branches: [main]
+    paths:
+      - "environments/**"
+      - "modules/**"
+
+  schedule:
+    - cron: "30 13 * * *"
+
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "plan | apply | destroy-staging"
+        required: true
+        default: "plan"
+        type: choice
+        options: [plan, apply, destroy-staging]
+
+concurrency:
+  group: terraform-infra-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+  pull-requests: write
+  issues: write
+
+env:
+  TF_VERSION: "1.7.5"
+  TF_IN_AUTOMATION: "true"
+  TF_INPUT: "false"
+  TF_STAGING_DIR: "environments/staging"
+
+jobs:
+  # ─────────────────────────────────────────────────────────
+  # JOB 1 — VALIDATE
+  # ─────────────────────────────────────────────────────────
+  validate:
+    name: "Validate"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - name: Check formatting
+        run: terraform fmt -check -recursive
+
+      - name: Validate modules
+        run: |
+          for d in backend-config environments/staging \
+                   modules/gke modules/networking \
+                   modules/artifact_registry modules/argocd; do
+            [ -d "$d" ] || continue
+            echo "── Validating: $d"
+            (cd "$d" && \
+              terraform init -backend=false -input=false -no-color && \
+              terraform validate -no-color)
+          done
+
+      - uses: terraform-linters/setup-tflint@v4
+        with:
+          tflint_version: v0.50.3
+
+      - name: Run tflint
+        run: tflint --recursive --format compact
+        continue-on-error: true
+
+      - name: Run Checkov
+        uses: bridgecrewio/checkov-action@master
+        with:
+          directory: .
+          framework: terraform
+          output_format: cli
+          soft_fail: true
+          skip_check: CKV_GCP_25,CKV_GCP_71
+
+  # ─────────────────────────────────────────────────────────
+  # JOB 2 — PLAN PHASE A
+  # ─────────────────────────────────────────────────────────
+  plan:
+    name: "Plan — Infra (staging)"
+    needs: validate
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.fork == false
+
+    defaults:
+      run:
+        working-directory: ${{ env.TF_STAGING_DIR }}
+
+    outputs:
+      exitcode: ${{ steps.plan.outputs.exitcode }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.SERVICE_ACCOUNT_EMAIL }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ vars.GCP_PROJECT_ID }}
+
+      - name: Write terraform.tfvars
+        run: |
+          cat > terraform.tfvars <<EOF
+          project_id    = "${{ vars.GCP_PROJECT_ID }}"
+          cluster_name  = "${{ vars.GKE_CLUSTER_NAME }}"
+          registry_name = "${{ vars.GAR_REPOSITORY_NAME }}"
+          region        = "${{ vars.GCP_REGION }}"
+          node_count    = ${{ vars.NODE_COUNT }}
+          node_vm_size  = "${{ vars.NODE_VM_SIZE }}"
+          EOF
+
+      - name: Terraform Init
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ vars.GCS_BUCKET_NAME }}" \
+            -backend-config="prefix=staging" \
+            -reconfigure -input=false -no-color
+
+      - name: Terraform Plan
+        id: plan
+        shell: bash
+        run: |
+          set +e
+
+          terraform plan \
+            -no-color \
+            -out=tfplan.binary \
+            -detailed-exitcode \
+            -input=false
+          EXIT=$?
+
+          echo "exitcode=${EXIT}" >> "$GITHUB_OUTPUT"
+
+          case "${EXIT}" in
+            0) echo " No changes — infrastructure is up to date." ;;
+            1) echo " Terraform error." ;;
+            2) echo " Changes detected — apply will run." ;;
+          esac
+
+          if [ "${EXIT}" -eq 1 ]; then exit 1; fi
+          exit 0
+
+      - name: Convert plan to JSON
+        if: steps.plan.outputs.exitcode == '2'
+        run: terraform show -json tfplan.binary > tfplan.json
+
+      - name: Upload plan artifact
+        if: steps.plan.outputs.exitcode == '2'
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfplan-infra
+          path: |
+            ${{ env.TF_STAGING_DIR }}/tfplan.binary
+            ${{ env.TF_STAGING_DIR }}/tfplan.json
+            ${{ env.TF_STAGING_DIR }}/terraform.tfvars
+          retention-days: 1
+
+      - name: Comment plan on PR
+        if: |
+          github.event_name == 'pull_request' &&
+          steps.plan.outputs.exitcode == '2'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            let planJson = {};
+            try {
+              planJson = JSON.parse(fs.readFileSync(
+                '${{ env.TF_STAGING_DIR }}/tfplan.json', 'utf8'
+              ));
+            } catch(e) {}
+
+            const changes = planJson.resource_changes || [];
+            const toAdd     = changes.filter(r =>
+              r.change.actions.includes('create') &&
+              !r.change.actions.includes('delete')).length;
+            const toChange  = changes.filter(r =>
+              r.change.actions.includes('update')).length;
+            const toDestroy = changes.filter(r =>
+              r.change.actions[0] === 'delete').length;
+
+            const rows = changes
+              .filter(r => r.change.actions[0] !== 'no-op')
+              .map(r => `- \`${r.change.actions.join('/')}\` **${r.address}**`)
+              .join('\n');
+
+            const body = `## Terraform Plan — Infra staging
+
+            | Action  | Count |
+            |---------|------:|
+            | Create  | ${toAdd} |
+            | Update  | ${toChange} |
+            | Destroy | ${toDestroy} |
+
+            <details><summary>Détail des ressources</summary>
+
+            ${rows || '_Aucun changement de ressource._'}
+            </details>
+
+            > Commit: \`${{ github.sha }}\``;
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body
+            });
+
+  # ─────────────────────────────────────────────────────────
+  # JOB 3 — APPLY
+  # ─────────────────────────────────────────────────────────
+  apply:
+    name: "Apply — Infra (staging)"
+    needs: plan
+    runs-on: ubuntu-latest
+    if: |
+      needs.plan.outputs.exitcode == '2' &&
+      github.event_name != 'pull_request' &&
+      (
+        github.event_name == 'push' ||
+        (github.event_name == 'workflow_dispatch' &&
+         inputs.action == 'apply')
+      )
+
+    defaults:
+      run:
+        working-directory: ${{ env.TF_STAGING_DIR }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.SERVICE_ACCOUNT_EMAIL }}
+
+      - name: Download plan artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: tfplan-infra
+          path: ${{ env.TF_STAGING_DIR }}
+
+      - name: Terraform Init
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ vars.GCS_BUCKET_NAME }}" \
+            -backend-config="prefix=staging" \
+            -reconfigure -input=false -no-color
+
+      - name: Terraform Apply
+        run: terraform apply -auto-approve -no-color tfplan.binary
+
+  # ─────────────────────────────────────────────────────────
+  # JOB 4 — DRIFT DETECTION
+  # ─────────────────────────────────────────────────────────
+  detect-drift:
+    name: "Detect infrastructure drift"
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'schedule' ||
+      (github.event_name == 'workflow_dispatch' &&
+       inputs.action == 'plan')
+
+    defaults:
+      run:
+        working-directory: ${{ env.TF_STAGING_DIR }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.SERVICE_ACCOUNT_EMAIL }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ vars.GCP_PROJECT_ID }}
+
+      - name: Write terraform.tfvars
+        run: |
+          cat > terraform.tfvars <<EOF
+          project_id    = "${{ vars.GCP_PROJECT_ID }}"
+          cluster_name  = "${{ vars.GKE_CLUSTER_NAME }}"
+          registry_name = "${{ vars.GAR_REPOSITORY_NAME }}"
+          region        = "${{ vars.GCP_REGION }}"
+          node_count    = ${{ vars.NODE_COUNT }}
+          node_vm_size  = "${{ vars.NODE_VM_SIZE }}"
+          EOF
+
+      - name: Terraform Init
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ vars.GCS_BUCKET_NAME }}" \
+            -backend-config="prefix=staging" \
+            -reconfigure -input=false -no-color
+
+      - name: Detect drift
+        id: drift
+        shell: bash
+        run: |
+          set +e
+
+          terraform plan \
+            -refresh-only \
+            -detailed-exitcode \
+            -no-color \
+            -out=drift.binary 2>&1 | tee drift.log
+
+          EXIT=$?
+          echo "drift_exitcode=${EXIT}" >> "$GITHUB_OUTPUT"
+
+          case "${EXIT}" in
+            0) echo "Infrastructure in sync." ;;
+            1) echo " Error during refresh." ;;
+            2) echo " DRIFT DETECTED." ;;
+          esac
+
+          if [ "${EXIT}" -eq 1 ]; then exit 1; fi
+          exit 0
+
+      - name: Open drift issue
+        if: steps.drift.outputs.drift_exitcode == '2'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const log = fs.existsSync('${{ env.TF_STAGING_DIR }}/drift.log')
+              ? fs.readFileSync('${{ env.TF_STAGING_DIR }}/drift.log', 'utf8').slice(0, 3000)
+              : 'Log not available.';
+
+            const existing = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              labels: 'terraform-drift',
+              state: 'open'
+            });
+
+            if (existing.data.length > 0) {
+              console.log('Drift issue already open — skipping.');
+              return;
+            }
+
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `[Drift] GCP infra differs from tfstate — ${new Date().toISOString().slice(0,10)}`,
+              labels: ['terraform-drift'],
+              body: `## Infrastructure drift detected\n\n<details><summary>Log</summary>\n\n\`\`\`\n${log}\n\`\`\`\n</details>`
+            });
+
+  # ─────────────────────────────────────────────────────────
+  # JOB 5 — DESTROY
+  # ─────────────────────────────────────────────────────────
+  destroy:
+    name: "Destroy staging"
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'workflow_dispatch' &&
+      inputs.action == 'destroy-staging'
+    environment: staging-destroy
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.SERVICE_ACCOUNT_EMAIL }}
+
+      - name: Write terraform.tfvars
+        working-directory: ${{ env.TF_STAGING_DIR }}
+        run: |
+          cat > terraform.tfvars <<EOF
+          project_id    = "${{ vars.GCP_PROJECT_ID }}"
+          cluster_name  = "${{ vars.GKE_CLUSTER_NAME }}"
+          registry_name = "${{ vars.GAR_REPOSITORY_NAME }}"
+          region        = "${{ vars.GCP_REGION }}"
+          node_count    = ${{ vars.NODE_COUNT }}
+          node_vm_size  = "${{ vars.NODE_VM_SIZE }}"
+          EOF
+
+      - name: Terraform Init
+        working-directory: ${{ env.TF_STAGING_DIR }}
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ vars.GCS_BUCKET_NAME }}" \
+            -backend-config="prefix=staging" \
+            -reconfigure -input=false -no-color
+
+      - name: Terraform Destroy
+        working-directory: ${{ env.TF_STAGING_DIR }}
+        run: terraform destroy -auto-approve -no-color
