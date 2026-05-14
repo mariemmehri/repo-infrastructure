@@ -413,18 +413,6 @@ jobs:
           workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ secrets.SERVICE_ACCOUNT_EMAIL }}
 
-      - name: Write terraform.tfvars
-        working-directory: ${{ env.TF_STAGING_DIR }}
-        run: |
-          cat > terraform.tfvars <<EOF
-          project_id    = "${{ vars.GCP_PROJECT_ID }}"
-          cluster_name  = "${{ vars.GKE_CLUSTER_NAME }}"
-          registry_name = "${{ vars.GAR_REPOSITORY_NAME }}"
-          region        = "${{ vars.GCP_REGION }}"
-          node_count    = ${{ vars.NODE_COUNT }}
-          node_vm_size  = "${{ vars.NODE_VM_SIZE }}"
-          EOF
-
       - name: Terraform Init
         working-directory: ${{ env.TF_STAGING_DIR }}
         run: |
@@ -432,6 +420,14 @@ jobs:
             -backend-config="bucket=${{ vars.GCS_BUCKET_NAME }}" \
             -backend-config="prefix=staging" \
             -reconfigure -input=false -no-color
+
+      - name: Check GitOps is already destroyed
+        run: |
+          echo "Checking ArgoCD..."
+          kubectl get application app-of-apps -n argocd && {
+            echo "GitOps still exists — destroy blocked"
+            exit 1
+          } || echo "GitOps already removed"
 
       - name: Terraform Destroy
         working-directory: ${{ env.TF_STAGING_DIR }}
