@@ -189,6 +189,16 @@ jobs:
           workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ secrets.SERVICE_ACCOUNT_EMAIL }}
 
+          
+      - uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ vars.GCP_PROJECT_ID }}
+
+      - name: Install GKE auth plugin
+        run: |
+          gcloud components install gke-gcloud-auth-plugin --quiet
+          echo "USE_GKE_GCLOUD_AUTH_PLUGIN=True" >> $GITHUB_ENV
+
       - name: Get GKE credentials
         run: |
           gcloud container clusters get-credentials \
@@ -216,3 +226,7 @@ jobs:
         run: |
           kubectl get application app-of-apps -n argocd
           echo " ArgoCD app-of-apps is live."
+
+      
+
+          
