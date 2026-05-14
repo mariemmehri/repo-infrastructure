@@ -21,11 +21,11 @@ on:
   workflow_dispatch:
     inputs:
       action:
-        description: "plan | apply | destroy-staging"
+        description: "plan | apply | destroy-staging | drift"
         required: true
         default: "plan"
         type: choice
-        options: [plan, apply, destroy-staging]
+        options: [plan, apply, destroy-staging, drift]
 
 concurrency:
   group: terraform-infra-${{ github.ref }}
@@ -293,7 +293,9 @@ jobs:
     if: |
       github.event_name == 'schedule' ||
       (github.event_name == 'workflow_dispatch' &&
-       inputs.action == 'plan')
+       inputs.action == 'plan')||
+       (github.event_name == 'workflow_dispatch' &&
+       inputs.action == 'drift')
 
     defaults:
       run:
