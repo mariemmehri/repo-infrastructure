@@ -206,6 +206,13 @@ jobs:
             ${{ vars.GKE_CLUSTER_NAME }} \
             --region ${{ vars.GCP_REGION }}-b \
             --project ${{ vars.GCP_PROJECT_ID }}
+            
+      - name: Download plan artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: tfplan-bootstrap
+          path: ${{ env.TF_BOOTSTRAP_DIR }}
+      
 
       - name: Terraform Init
         run: |
