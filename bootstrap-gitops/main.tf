@@ -16,14 +16,14 @@ resource "kubernetes_namespace_v1" "argocd" {
 # ─── Step 2 : Installation ArgoCD via Helm ────────────────
 resource "helm_release" "argocd" {
   name       = "argocd"
-  repository = "https://argoproj.github.io/argo-helm" 
+  repository = "https://argoproj.github.io/argo-helm"
   chart      = "argo-cd"
   version    = var.argocd_chart_version
   namespace  = kubernetes_namespace_v1.argocd.metadata[0].name
 
   wait          = true #Force Terraform/Helm à attendre que les ressources Kubernetes soient prêtes avant de terminer.
   wait_for_jobs = true #Attendre que les jobs (ex: argocd-redis-ha) soient terminés avant de considérer le déploiement réussi.
-  timeout       = 600 #Augmente le timeout global pour les opérations Helm, utile si le cluster est lent ou si les ressources prennent du temps à se stabiliser.
+  timeout       = 600  #Augmente le timeout global pour les opérations Helm, utile si le cluster est lent ou si les ressources prennent du temps à se stabiliser.
 
   values = [
     yamlencode({
@@ -62,7 +62,7 @@ resource "kubernetes_manifest" "root_app" {
 
   # depends_on critique — les CRDs ArgoCD doivent exister
   # avant que Terraform essaie de créer une "Application"
-  depends_on = [helm_release.argocd]  
+  depends_on = [helm_release.argocd]
 
   manifest = {
     apiVersion = "argoproj.io/v1alpha1"
@@ -78,8 +78,8 @@ resource "kubernetes_manifest" "root_app" {
       project = "default"
       source = {
         repoURL        = var.gitops_repo_url        # "https://github.com/mariemmehri/repo-config"
-        targetRevision = var.gitops_target_revision  # "main"
-        path           = "apps"                      # surveille ce dossier
+        targetRevision = var.gitops_target_revision # "main"
+        path           = "apps"                     # surveille ce dossier
       }
       destination = {
         server    = "https://kubernetes.default.svc"
