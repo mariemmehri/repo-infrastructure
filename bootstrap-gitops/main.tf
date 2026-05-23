@@ -63,6 +63,10 @@ resource "kubernetes_manifest" "root_app" {
   # depends_on critique — les CRDs ArgoCD doivent exister
   # avant que Terraform essaie de créer une "Application"
   depends_on = [helm_release.argocd]
+  field_manager {
+    force_conflicts = true
+  }
+
 
   manifest = {
     apiVersion = "argoproj.io/v1alpha1"
