@@ -148,9 +148,9 @@ jobs:
           echo "exitcode=${EXIT}" >> "$GITHUB_OUTPUT"
 
           case "${EXIT}" in
-            0) echo "✅ Bootstrap already applied — nothing to do." ;;
-            1) echo "❌ Terraform error." ;;
-            2) echo "📋 Bootstrap needed — app-of-apps will be created." ;;
+            0) echo "Bootstrap already applied — nothing to do." ;;
+            1) echo " Terraform error." ;;
+            2) echo " Bootstrap needed — app-of-apps will be created." ;;
           esac
 
           if [ "${EXIT}" -eq 1 ]; then exit 1; fi
@@ -207,12 +207,6 @@ jobs:
             --region ${{ vars.GCP_REGION }}-b \
             --project ${{ vars.GCP_PROJECT_ID }}
 
-      - name: Download plan artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: tfplan-bootstrap
-          path: ${{ env.TF_BOOTSTRAP_DIR }}
-
       - name: Terraform Init
         run: |
           terraform init \
@@ -220,13 +214,48 @@ jobs:
             -backend-config="prefix=bootstrap" \
             -reconfigure -input=false -no-color
 
-      - name: Terraform Apply
-        run: terraform apply -auto-approve -no-color tfplan.binary
-
-      - name: Verify app-of-apps created
+      # ── ÉTAPE 1 : ArgoCD uniquement ──────────────────────
+      - name: Terraform Apply — ArgoCD only
         run: |
-          kubectl get application app-of-apps -n argocd
-          echo "✅ ArgoCD app-of-apps is live."
+          terraform apply \
+            -target=helm_release.argocd \
+            -auto-approve \
+            -no-color
+
+      # ── ÉTAPE 2 : attendre que les CRDs soient prêtes ────
+      - name: Wait for ArgoCD CRDs
+        run: |
+          echo "Waiting for ArgoCD CRDs..."
+          kubectl wait --for=condition=established \
+            crd/applications.argoproj.io \
+            --timeout=120s
+          echo " CRDs ready"
+      # ── ÉTAPE 3 : ArgoCD pods prêts ──────────────────────
+      - name: Wait for ArgoCD server
+        run: |
+          kubectl wait --for=condition=Ready pods \
+            -l app.kubernetes.io/name=argocd-server \
+            -n argocd \
+            --timeout=300s
+          echo " ArgoCD server ready"
+
+      # ── ÉTAPE 4 : root-app maintenant que CRDs existent ──
+      - name: Terraform Apply — root-app
+        run: terraform apply -auto-approve -no-color
+
+      # ── ÉTAPE 5 : vérifications finales ──────────────────
+      - name: Verify root-app created
+        run: |
+          kubectl get application root-app -n argocd
+          echo " root-app live"
+
+      - name: Verify todo-staging synced
+        run: |
+          kubectl wait --for=jsonpath='{.status.sync.status}'=Synced \
+            application/todo-staging \
+            -n argocd \
+            --timeout=180s
+          echo " todo-staging synced"
 
   # ─────────────────────────────────────────────────────────
   # JOB 3 — DESTROY

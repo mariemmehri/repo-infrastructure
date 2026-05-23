@@ -1,3 +1,5 @@
+# bootstrap-gitops/variables.tf
+
 variable "project_id" {
   description = "GCP Project ID"
   type        = string
@@ -15,7 +17,7 @@ variable "cluster_name" {
 }
 
 variable "gitops_repo_url" {
-  description = "URL du repo GitOps (config repo)"
+  description = "URL du repo GitOps"
   type        = string
 }
 
@@ -26,7 +28,13 @@ variable "gitops_target_revision" {
 }
 
 variable "gitops_path" {
-  description = "Chemin vers les applications ArgoCD dans le repo"
+  description = "Chemin vers les applications ArgoCD"
   type        = string
   default     = "apps/"
+}
+
+variable "argocd_chart_version" {
+  description = "Version du chart Helm ArgoCD"
+  type        = string
+  default     = "6.7.3"
 }
