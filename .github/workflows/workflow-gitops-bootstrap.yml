@@ -204,26 +204,26 @@ jobs:
         with:
           project_id: ${{ vars.GCP_PROJECT_ID }}
       
-      - name: Install gke-gcloud-auth-plugin
+      - name: Install gke-gcloud-auth-plugin # requis pour l'auth GKE 
         run: |
           gcloud components install gke-gcloud-auth-plugin --quiet
           echo "USE_GKE_GCLOUD_AUTH_PLUGIN=True" >> $GITHUB_ENV
 
-      - name: Get GKE credentials
+      - name: Get GKE credentials # requis pour appliquer le plan terraform qui crée des ressources dans le cluster
         run: |
           gcloud container clusters get-credentials \
             ${{ vars.GKE_CLUSTER_NAME }} \
             --region ${{ vars.GCP_REGION }}-b \
             --project ${{ vars.GCP_PROJECT_ID }}
 
-      - name: Download plan artifact
+      - name: Download plan artifact # tfplan et terraform.tfvars
         uses: actions/download-artifact@v4
         with:
           name: tfplan-bootstrap
           path: ${{ env.TF_BOOTSTRAP_DIR }}
       
 
-      - name: Terraform Init
+      - name: Terraform Init 
         run: |
           terraform init \
             -backend-config="bucket=${{ vars.GCS_BUCKET_NAME }}" \
@@ -231,7 +231,7 @@ jobs:
             -reconfigure -input=false -no-color
 
       # ── ÉTAPE 1 : ArgoCD uniquement ──────────────────────
-      - name: Terraform Apply — ArgoCD only
+      - name: Terraform Apply — ArgoCD only # important : on applique d'abord ArgoCD seul, sans app-of-apps, pour éviter les erreurs liées à l'absence de CRDs
         run: |
           terraform apply \
             -target=helm_release.argocd \
@@ -239,7 +239,7 @@ jobs:
             -no-color
 
       # ── ÉTAPE 2 : attendre que les CRDs soient prêtes ────
-      - name: Wait for ArgoCD CRDs
+      - name: Wait for ArgoCD CRDs  # important : les CRDs doivent être établies avant que Terraform puisse créer l'Application app-of-apps
         run: |
           echo "Waiting for ArgoCD CRDs..."
           kubectl wait --for=condition=established \
@@ -256,11 +256,11 @@ jobs:
           echo " ArgoCD server ready"
 
       # ── ÉTAPE 4 : root-app maintenant que CRDs existent ──
-      - name: Terraform Apply — root-app
+      - name: Terraform Apply — root-app # maintenant que ArgoCD est prêt et que les CRDs existent, on applique le reste du plan pour créer l'Application app-of-apps
         run: terraform apply -auto-approve -no-color
 
       # ── ÉTAPE 5 : vérifications finales ──────────────────
-      - name: Verify root-app created
+      - name: Verify root-app created 
         run: |
           kubectl get application root-app -n argocd
           echo " root-app live"

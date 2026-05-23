@@ -63,7 +63,7 @@ resource "kubernetes_manifest" "root_app" {
   # depends_on critique — les CRDs ArgoCD doivent exister
   # avant que Terraform essaie de créer une "Application"
   depends_on = [helm_release.argocd]
-  field_manager {
+  field_manager { #optionnel mais recommandé pour éviter les conflits de gestion des ressources dans Kubernetes
     force_conflicts = true
   }
 
@@ -83,7 +83,7 @@ resource "kubernetes_manifest" "root_app" {
       source = {
         repoURL        = var.gitops_repo_url        # "https://github.com/mariemmehri/repo-config"
         targetRevision = var.gitops_target_revision # "main"
-        path           = "apps"                     # surveille ce dossier
+        path           = var.gitops_path                  # surveille ce dossier
       }
       destination = {
         server    = "https://kubernetes.default.svc"
@@ -95,6 +95,10 @@ resource "kubernetes_manifest" "root_app" {
           selfHeal = true
         }
       }
+        syncOptions = [
+          "ServerSideApply=true",
+          "CreateNamespace=true"
+  ]
     }
   }
 }
