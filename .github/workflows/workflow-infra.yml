@@ -123,14 +123,6 @@ jobs:
           service_account: ${{ secrets.SERVICE_ACCOUNT_EMAIL }}
 
 
-      - name: Get GKE credentials
-        uses: google-github-actions/get-gke-credentials@v2
-        with:
-          cluster_name: ${{ vars.GKE_CLUSTER_NAME }}
-          location: ${{ vars.GCP_REGION }}
-          project_id: ${{ vars.GCP_PROJECT_ID }}
-
-          
       - uses: google-github-actions/setup-gcloud@v2
         with:
           project_id: ${{ vars.GCP_PROJECT_ID }}
@@ -277,6 +269,7 @@ jobs:
           workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ secrets.SERVICE_ACCOUNT_EMAIL }}
 
+      
       - name: Download plan artifact
         uses: actions/download-artifact@v4
         with:
@@ -291,7 +284,22 @@ jobs:
             -reconfigure -input=false -no-color
 
       - name: Terraform Apply
+        working-directory: environments/staging
         run: terraform apply -auto-approve -no-color tfplan.binary
+        # ::
+      - name: Wait for GKE to be fully ready
+        run: |
+          gcloud container clusters get-credentials \
+            ${{ vars.GKE_CLUSTER_NAME }} \
+            --region ${{ vars.GCP_REGION }}-b \
+            --project ${{ vars.GCP_PROJECT_ID }}
+          
+          # Attendre que tous les nodes soient Ready
+          kubectl wait --for=condition=Ready nodes \
+            --all \
+            --timeout=300s
+          
+          echo "✅ GKE cluster fully ready"
 
   # ─────────────────────────────────────────────────────────
   # JOB 4 — DRIFT DETECTION
@@ -423,6 +431,13 @@ jobs:
         with:
           workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ secrets.SERVICE_ACCOUNT_EMAIL }}
+
+      - name: Get GKE credentials
+        uses: google-github-actions/get-gke-credentials@v2
+        with:
+          cluster_name: ${{ vars.GKE_CLUSTER_NAME }}
+          location: ${{ vars.GCP_REGION }}
+          project_id: ${{ vars.GCP_PROJECT_ID }}
 
       - name: Terraform Init
         working-directory: ${{ env.TF_STAGING_DIR }}
