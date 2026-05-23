@@ -95,10 +95,6 @@ resource "kubernetes_manifest" "root_app" {
           selfHeal = true
         }
       }
-        syncOptions = [
-          "ServerSideApply=true",
-          "CreateNamespace=true"
-  ]
     }
   }
 }
