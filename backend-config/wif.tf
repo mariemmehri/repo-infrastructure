@@ -114,9 +114,9 @@ resource "google_service_account" "github_actions_ci" {
 # Rôles CI application
 locals {
   github_actions_roles = [
-    "roles/artifactregistry.writer",   # docker push
-    "roles/container.developer",       # kubectl (optionnel)
-    "roles/storage.objectViewer",      # lire GCS si besoin
+    "roles/artifactregistry.writer", # docker push
+    "roles/container.developer",     # kubectl (optionnel)
+    "roles/storage.objectViewer",    # lire GCS si besoin
   ]
 }
 
