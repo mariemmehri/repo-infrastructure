@@ -83,7 +83,7 @@ resource "kubernetes_manifest" "root_app" {
       source = {
         repoURL        = var.gitops_repo_url        # "https://github.com/mariemmehri/repo-config"
         targetRevision = var.gitops_target_revision # "main"
-        path           = var.gitops_path                  # surveille ce dossier
+        path           = var.gitops_path            # surveille ce dossier
       }
       destination = {
         server    = "https://kubernetes.default.svc"
