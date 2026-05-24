@@ -438,7 +438,16 @@ jobs:
           cluster_name: ${{ vars.GKE_CLUSTER_NAME }}
           location: ${{ vars.GCP_REGION }}-b
           project_id: ${{ vars.GCP_PROJECT_ID }}
-
+      - name: Write terraform.tfvars
+        run: |
+          cat > terraform.tfvars <<EOF
+          project_id             = "${{ vars.GCP_PROJECT_ID }}"
+          region                 = "${{ vars.GCP_REGION }}"
+          cluster_name           = "${{ vars.GKE_CLUSTER_NAME }}"
+          gitops_repo_url        = "${{ vars.GITOPS_REPO_URL }}"
+          gitops_target_revision = "main"
+          gitops_path            = "${{ vars.GITOPS_PATH }}"
+          EOF
       - name: Terraform Init
         working-directory: ${{ env.TF_STAGING_DIR }}
         run: |
