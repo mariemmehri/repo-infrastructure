@@ -260,19 +260,42 @@ jobs:
         run: terraform apply -auto-approve -no-color
 
       # ── ÉTAPE 5 : vérifications finales ──────────────────
-      - name: Verify root-app created 
+      - name: Verify root-app created
         run: |
-          kubectl get application root-app -n argocd
-          echo " root-app live"
+          echo "Waiting for root-app..."
+          for i in $(seq 1 12); do
+            if kubectl get application root-app -n argocd 2>/dev/null; then
+              echo "root-app live ✓"
+              exit 0
+            fi
+            echo "Attempt $i/12 — waiting 10s..."
+            sleep 10
+          done
+          echo "root-app not found after 2 minutes"
+          exit 1
 
       - name: Verify todo-staging synced
         run: |
-          kubectl wait --for=jsonpath='{.status.sync.status}'=Synced \
-            application/todo-staging \
-            -n argocd \
-            --timeout=180s
-          echo " todo-staging synced"
-
+          echo "Waiting for todo-staging to sync..."
+          for i in $(seq 1 20); do
+            STATUS=$(kubectl get application todo-staging \
+              -n argocd \
+              -o jsonpath='{.status.sync.status}' 2>/dev/null)
+            
+            echo "Attempt $i/20 — status: $STATUS"
+            
+            if [ "$STATUS" = "Synced" ]; then
+              echo "todo-staging synced ✓"
+              exit 0
+            fi
+            
+            sleep 15
+          done
+          
+          echo "Debug info:"
+          kubectl describe application todo-staging -n argocd
+          kubectl get pods -n staging
+          exit 1
   # ─────────────────────────────────────────────────────────
   # JOB 3 — DESTROY
   # Manuel uniquement — protégé par GitHub Environment
@@ -311,7 +334,10 @@ jobs:
         with:
           project_id: ${{ vars.GCP_PROJECT_ID }}
 
-          
+      - name: Install gke-gcloud-auth-plugin
+        run: |
+          gcloud components install gke-gcloud-auth-plugin --quiet
+          echo "USE_GKE_GCLOUD_AUTH_PLUGIN=True" >> $GITHUB_ENV
 
       - name: Verify cluster exists
         run: |
@@ -345,24 +371,24 @@ jobs:
             -backend-config="prefix=bootstrap" \
             -reconfigure -input=false -no-color
 
-      - name: Show what will be destroyed
+      - name: Remove ArgoCD finalizer before destroy
         run: |
-          terraform plan -destroy -no-color -input=false
-          echo ""
-          echo " L'objet app-of-apps ArgoCD va être supprimé."
-          echo "    ArgoCD arrêtera de synchroniser toutes les apps."
-          echo "    Le cluster GKE et ArgoCD ne sont PAS affectés."
+          kubectl patch application root-app -n argocd \
+            --type json \
+            -p '[{"op":"remove","path":"/metadata/finalizers"}]' \
+            2>/dev/null || echo "No finalizer to remove"
+          sleep 5
 
       - name: Terraform Destroy
         run: terraform destroy -auto-approve -no-color
 
       - name: Confirm destruction
         run: |
-          echo "Vérification que app-of-apps n'existe plus..."
-          if kubectl get application app-of-apps -n argocd 2>/dev/null; then
-            echo " L'objet existe encore."
+          echo "Vérification que root-app n'existe plus..."
+          if kubectl get application root-app \
+            -n argocd 2>/dev/null; then
+            echo "root-app existe encore"
             exit 1
           else
-            echo " app-of-apps supprimé avec succès."
-            echo "Pour recréer : workflow_dispatch → action=apply"
+            echo "root-app supprimé avec succès ✓"
           fi
