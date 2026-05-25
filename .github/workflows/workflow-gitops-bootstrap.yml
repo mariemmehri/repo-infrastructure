@@ -50,21 +50,22 @@ jobs:
           if [ "${{ github.event_name }}" == "workflow_run" ]; then
             if [ "${{ github.event.workflow_run.conclusion }}" == "success" ]; then
               echo "should-run=true" >> "$GITHUB_OUTPUT"
+              echo "Triggered by successful infra run — proceeding."
             else
               echo "should-run=false" >> "$GITHUB_OUTPUT"
+              echo "Infra workflow did not succeed — skipping."
             fi
           else
             echo "should-run=true" >> "$GITHUB_OUTPUT"
+            echo "Direct trigger — proceeding."
           fi
 
   # ─────────────────────────────────────────────────────────
   # JOB 1 — PLAN
-  # Deux plans séparés :
-  #   plan-argocd   → toujours exécuté
-  #   plan-rootapp  → seulement si CRDs existent
+  # Skippé si action=destroy
   # ─────────────────────────────────────────────────────────
   plan:
-    name: "Plan"
+    name: "Plan — GitOps Bootstrap"
     needs: check-trigger
     runs-on: ubuntu-latest
     if: |
@@ -79,9 +80,7 @@ jobs:
         working-directory: ${{ env.TF_BOOTSTRAP_DIR }}
 
     outputs:
-      argocd_exitcode: ${{ steps.plan_argocd.outputs.exitcode }}
-      rootapp_exitcode: ${{ steps.plan_rootapp.outputs.exitcode }}
-      crd_exists: ${{ steps.crd_check.outputs.exists }}
+      exitcode: ${{ steps.plan.outputs.exitcode }}
 
     steps:
       - uses: actions/checkout@v4
@@ -100,11 +99,6 @@ jobs:
       - uses: google-github-actions/setup-gcloud@v2
         with:
           project_id: ${{ vars.GCP_PROJECT_ID }}
-
-      - name: Install gke-gcloud-auth-plugin
-        run: |
-          gcloud components install gke-gcloud-auth-plugin --quiet
-          echo "USE_GKE_GCLOUD_AUTH_PLUGIN=True" >> $GITHUB_ENV
 
       - name: Verify cluster exists
         run: |
@@ -138,90 +132,50 @@ jobs:
             -backend-config="prefix=bootstrap" \
             -reconfigure -input=false -no-color
 
-      # ── Plan 1 : ArgoCD uniquement (pas de CRD check) ──────
-      - name: Plan — ArgoCD
-        id: plan_argocd
+      - name: Terraform Plan
+        id: plan
         shell: bash
         run: |
           set +e
+
           terraform plan \
-            -target=kubernetes_namespace_v1.argocd \
-            -target=helm_release.argocd \
             -no-color \
-            -out=tfplan-argocd.binary \
+            -out=tfplan.binary \
             -detailed-exitcode \
             -input=false
           EXIT=$?
+
           echo "exitcode=${EXIT}" >> "$GITHUB_OUTPUT"
-          echo "ArgoCD plan exitcode: ${EXIT}"
+
+          case "${EXIT}" in
+            0) echo "Bootstrap already applied — nothing to do." ;;
+            1) echo " Terraform error." ;;
+            2) echo " Bootstrap needed — app-of-apps will be created." ;;
+          esac
+
           if [ "${EXIT}" -eq 1 ]; then exit 1; fi
           exit 0
 
-      # ── Vérifier si CRDs ArgoCD existent déjà ──────────────
-      # Si oui → root_app peut être planifié maintenant
-      # Si non → root_app sera appliqué après install ArgoCD
-      - name: Check ArgoCD CRDs
-        id: crd_check
-        shell: bash
-        run: |
-          kubectl get crd applications.argoproj.io &>/dev/null \
-            && echo "exists=true" >> "$GITHUB_OUTPUT" \
-            || echo "exists=false" >> "$GITHUB_OUTPUT"
-
-          echo "CRD exists: $(cat $GITHUB_OUTPUT | grep exists | tail -1)"
-
-      # ── Plan 2 : root-app (seulement si CRDs présentes) ────
-      - name: Plan — root-app
-        id: plan_rootapp
-        if: steps.crd_check.outputs.exists == 'true'
-        shell: bash
-        run: |
-          set +e
-          terraform plan \
-            -target=kubernetes_manifest.root_app \
-            -no-color \
-            -out=tfplan-rootapp.binary \
-            -detailed-exitcode \
-            -input=false
-          EXIT=$?
-          echo "exitcode=${EXIT}" >> "$GITHUB_OUTPUT"
-          echo "root-app plan exitcode: ${EXIT}"
-          if [ "${EXIT}" -eq 1 ]; then exit 1; fi
-          exit 0
-
-      # Si CRDs absentes → root_app sera géré dans apply
-      - name: Skip root-app plan (CRDs not ready)
-        if: steps.crd_check.outputs.exists == 'false'
-        run: |
-          echo "exitcode=2" >> "$GITHUB_OUTPUT"
-          echo "CRDs absent — root-app sera déployé après ArgoCD"
-        id: plan_rootapp_skip
-
-      - name: Upload artifacts
+      - name: Upload plan artifact
+        if: steps.plan.outputs.exitcode == '2'
         uses: actions/upload-artifact@v4
         with:
           name: tfplan-bootstrap
           path: |
-            ${{ env.TF_BOOTSTRAP_DIR }}/tfplan-argocd.binary
-            ${{ env.TF_BOOTSTRAP_DIR }}/tfplan-rootapp.binary
+            ${{ env.TF_BOOTSTRAP_DIR }}/tfplan.binary
             ${{ env.TF_BOOTSTRAP_DIR }}/terraform.tfvars
           retention-days: 1
 
   # ─────────────────────────────────────────────────────────
   # JOB 2 — APPLY
-  # Logique :
-  #   Si ArgoCD needed  → installe ArgoCD → attend CRDs → apply root-app
-  #   Si ArgoCD exists  → apply root-app directement (si needed)
+  # Skippé si action=destroy ou exitcode=0
   # ─────────────────────────────────────────────────────────
   apply:
-    name: "Apply"
+    name: "Apply — GitOps Bootstrap"
     needs: plan
     runs-on: ubuntu-latest
     if: |
-      (
-        needs.plan.outputs.argocd_exitcode == '2' ||
-        needs.plan.outputs.rootapp_exitcode == '2'
-      ) &&
+      needs.plan.outputs.exitcode == '2' &&
       github.event_name != 'pull_request' &&
       (
         github.event_name != 'workflow_dispatch' ||
@@ -249,97 +203,81 @@ jobs:
       - uses: google-github-actions/setup-gcloud@v2
         with:
           project_id: ${{ vars.GCP_PROJECT_ID }}
-
-      - name: Install gke-gcloud-auth-plugin
+      
+      - name: Install gke-gcloud-auth-plugin # requis pour l'auth GKE 
         run: |
           gcloud components install gke-gcloud-auth-plugin --quiet
           echo "USE_GKE_GCLOUD_AUTH_PLUGIN=True" >> $GITHUB_ENV
 
-      - name: Get GKE credentials
+      - name: Get GKE credentials # requis pour appliquer le plan terraform qui crée des ressources dans le cluster
         run: |
           gcloud container clusters get-credentials \
             ${{ vars.GKE_CLUSTER_NAME }} \
             --region ${{ vars.GCP_REGION }}-b \
             --project ${{ vars.GCP_PROJECT_ID }}
 
-      - name: Download artifacts
+      - name: Download plan artifact # tfplan et terraform.tfvars
         uses: actions/download-artifact@v4
         with:
           name: tfplan-bootstrap
           path: ${{ env.TF_BOOTSTRAP_DIR }}
+      
 
-      - name: Terraform Init
+      - name: Terraform Init 
         run: |
           terraform init \
             -backend-config="bucket=${{ vars.GCS_BUCKET_NAME }}" \
             -backend-config="prefix=bootstrap" \
             -reconfigure -input=false -no-color
 
-      # ── PHASE A : ArgoCD si nécessaire ─────────────────────
-      - name: "Phase A — Apply ArgoCD"
-        if: needs.plan.outputs.argocd_exitcode == '2'
+      # ── ÉTAPE 1 : ArgoCD uniquement ──────────────────────
+      - name: Terraform Apply — ArgoCD only # important : on applique d'abord ArgoCD seul, sans app-of-apps, pour éviter les erreurs liées à l'absence de CRDs
         run: |
           terraform apply \
+            -target=helm_release.argocd \
             -auto-approve \
-            -no-color \
-            tfplan-argocd.binary
+            -no-color
 
-      # ── Attendre CRDs (toujours, pour être sûr) ────────────
-      - name: "Wait — ArgoCD CRD established"
+      # ── ÉTAPE 2 : attendre que les CRDs soient prêtes ────
+      - name: Wait for ArgoCD CRDs  # important : les CRDs doivent être établies avant que Terraform puisse créer l'Application app-of-apps
         run: |
-          echo "Waiting for applications.argoproj.io CRD..."
+          echo "Waiting for ArgoCD CRDs..."
           kubectl wait --for=condition=established \
             crd/applications.argoproj.io \
             --timeout=120s
-          echo "CRD ready"
-
-      # ── Attendre ArgoCD server ──────────────────────────────
-      - name: "Wait — ArgoCD server pod ready"
+          echo " CRDs ready"
+      # ── ÉTAPE 3 : ArgoCD pods prêts ──────────────────────
+      - name: Wait for ArgoCD server
         run: |
           kubectl wait --for=condition=Ready pods \
             -l app.kubernetes.io/name=argocd-server \
             -n argocd \
             --timeout=300s
-          echo "ArgoCD server ready"
+          echo " ArgoCD server ready"
 
-      # ── PHASE B : root-app ─────────────────────────────────
-      # Utilise le plan sauvegardé si disponible
-      # Sinon fait un apply ciblé (cas CRDs absentes au moment du plan)
-      - name: "Phase B — Apply root-app (from saved plan)"
-        if: |
-          needs.plan.outputs.crd_exists == 'true' &&
-          needs.plan.outputs.rootapp_exitcode == '2'
-        run: |
-          terraform apply \
-            -auto-approve \
-            -no-color \
-            tfplan-rootapp.binary
+      # ── ÉTAPE 4 : root-app maintenant que CRDs existent ──
+      - name: Terraform Apply — root-app # maintenant que ArgoCD est prêt et que les CRDs existent, on applique le reste du plan pour créer l'Application app-of-apps
+        run: terraform apply -auto-approve -no-color
 
-      - name: "Phase B — Apply root-app (fresh plan)"
-        if: needs.plan.outputs.crd_exists == 'false'
-        run: |
-          terraform apply \
-            -target=kubernetes_manifest.root_app \
-            -auto-approve \
-            -no-color
-
-      # ── Vérifications ──────────────────────────────────────
-      - name: "Verify — root-app exists"
+      # ── ÉTAPE 5 : vérifications finales ──────────────────
+      - name: Verify root-app created 
         run: |
           kubectl get application root-app -n argocd
-          echo "root-app created"
+          echo " root-app live"
 
-      - name: "Verify — todo-staging synced"
+      - name: Verify todo-staging synced
         run: |
-          kubectl wait \
-            --for=jsonpath='{.status.sync.status}'=Synced \
+          kubectl wait --for=jsonpath='{.status.sync.status}'=Synced \
             application/todo-staging \
             -n argocd \
             --timeout=180s
-          echo "todo-staging synced"
+          echo " todo-staging synced"
 
   # ─────────────────────────────────────────────────────────
   # JOB 3 — DESTROY
+  # Manuel uniquement — protégé par GitHub Environment
+  # Supprime uniquement l'objet app-of-apps
+  # NE touche PAS au cluster GKE ni à ArgoCD
   # ─────────────────────────────────────────────────────────
   destroy:
     name: "Destroy — GitOps Bootstrap"
@@ -373,10 +311,7 @@ jobs:
         with:
           project_id: ${{ vars.GCP_PROJECT_ID }}
 
-      - name: Install gke-gcloud-auth-plugin
-        run: |
-          gcloud components install gke-gcloud-auth-plugin --quiet
-          echo "USE_GKE_GCLOUD_AUTH_PLUGIN=True" >> $GITHUB_ENV
+          
 
       - name: Verify cluster exists
         run: |
@@ -411,13 +346,23 @@ jobs:
             -reconfigure -input=false -no-color
 
       - name: Show what will be destroyed
-        run: terraform plan -destroy -no-color -input=false
+        run: |
+          terraform plan -destroy -no-color -input=false
+          echo ""
+          echo " L'objet app-of-apps ArgoCD va être supprimé."
+          echo "    ArgoCD arrêtera de synchroniser toutes les apps."
+          echo "    Le cluster GKE et ArgoCD ne sont PAS affectés."
 
       - name: Terraform Destroy
         run: terraform destroy -auto-approve -no-color
 
       - name: Confirm destruction
         run: |
-          kubectl get application root-app -n argocd 2>/dev/null \
-            && { echo "root-app existe encore"; exit 1; } \
-            || echo "root-app supprimé avec succès"
+          echo "Vérification que app-of-apps n'existe plus..."
+          if kubectl get application app-of-apps -n argocd 2>/dev/null; then
+            echo " L'objet existe encore."
+            exit 1
+          else
+            echo " app-of-apps supprimé avec succès."
+            echo "Pour recréer : workflow_dispatch → action=apply"
+          fi
