@@ -205,17 +205,23 @@ jobs:
         with:
           project_id: ${{ vars.GCP_PROJECT_ID }}
       
-      - name: Install gke-gcloud-auth-plugin # requis pour l'auth GKE 
-        run: |
-          gcloud components install gke-gcloud-auth-plugin --quiet
-          echo "USE_GKE_GCLOUD_AUTH_PLUGIN=True" >> $GITHUB_ENV
+      # - name: Install gke-gcloud-auth-plugin # requis pour l'auth GKE 
+      #   run: |
+      #     gcloud components install gke-gcloud-auth-plugin --quiet
+      #     echo "USE_GKE_GCLOUD_AUTH_PLUGIN=True" >> $GITHUB_ENV
 
-      - name: Get GKE credentials # requis pour appliquer le plan terraform qui crée des ressources dans le cluster
-        run: |
-          gcloud container clusters get-credentials \
-            ${{ vars.GKE_CLUSTER_NAME }} \
-            --region ${{ vars.GCP_REGION }}-b \
-            --project ${{ vars.GCP_PROJECT_ID }}
+      # - name: Get GKE credentials # requis pour appliquer le plan terraform qui crée des ressources dans le cluster
+      #   run: |
+      #     gcloud container clusters get-credentials \
+      #       {{ vars.GKE_CLUSTER_NAME }} \
+      #       --region {{ vars.GCP_REGION }}-b \
+      #       --project {{ vars.GCP_PROJECT_ID }}
+      - name: Get GKE credentials
+        uses: google-github-actions/get-gke-credentials@v2
+        with:
+          cluster_name: ${{ vars.GKE_CLUSTER_NAME }}
+          location: ${{ vars.GCP_REGION }}-b
+          project_id: ${{ vars.GCP_PROJECT_ID }}
 
       - name: Download plan artifact # tfplan et terraform.tfvars
         uses: actions/download-artifact@v4
