@@ -98,8 +98,16 @@ jobs:
     needs: validate
     runs-on: ubuntu-latest
     if: |
-      github.event_name != 'pull_request' ||
-      github.event.pull_request.head.repo.fork == false
+        (
+          github.event_name != 'pull_request' ||
+          github.event.pull_request.head.repo.fork == false
+        ) &&
+        (
+          github.event_name != 'workflow_dispatch' ||
+          inputs.action != 'destroy-staging'
+        )
+
+
 
     defaults:
       run:
@@ -295,7 +303,7 @@ jobs:
             gs://${{ vars.GCS_BUCKET_NAME }}/staging/default.tflock \
             2>/dev/null || echo "No lock to remove"
         # ::
-          
+
       - name: Install plugin, get credentials and wait for GKE
         run: |
           gcloud components install gke-gcloud-auth-plugin --quiet
