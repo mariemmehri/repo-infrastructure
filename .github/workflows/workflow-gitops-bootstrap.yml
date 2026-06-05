@@ -223,7 +223,7 @@ jobs:
           location: ${{ vars.GCP_REGION }}-b
           project_id: ${{ vars.GCP_PROJECT_ID }}
 
-      - name: Download plan artifact # tfplan et terraform.tfvars
+      - name: Download plan artifact
         uses: actions/download-artifact@v4
         with:
           name: tfplan-bootstrap
@@ -275,8 +275,6 @@ jobs:
         run: terraform apply -auto-approve -no-color
 
       - name: Release lock on failure
-        # Nettoyage du lock Terraform en cas d'échec pour éviter
-        # de bloquer les runs suivants.
         if: failure()
         run: |
           gsutil rm -f \
@@ -288,6 +286,35 @@ jobs:
         run: |
           kubectl get application root-app -n argocd
           echo "root-app live"
+
+      # FIX: root-app doit d'abord être Synced avant que todo-staging
+      # soit créé. On attend root-app, puis on poll l'existence de
+      # todo-staging (créé dynamiquement par ArgoCD depuis le repo
+      # GitOps), et seulement ensuite on attend son sync.
+      - name: Verify root-app synced
+        run: |
+          kubectl wait --for=jsonpath='{.status.sync.status}'=Synced \
+            application/root-app \
+            -n argocd \
+            --timeout=120s
+          echo "root-app synced"
+
+      - name: Wait for todo-staging to exist
+        # root-app est synced mais todo-staging n'est pas encore créé
+        # par ArgoCD — on poll jusqu'à ce qu'il apparaisse (max 240s).
+        run: |
+          echo "Waiting for todo-staging Application to be created by ArgoCD..."
+          for i in $(seq 1 24); do
+            if kubectl get application todo-staging -n argocd 2>/dev/null; then
+              echo "todo-staging found"
+              exit 0
+            fi
+            echo "Attempt ${i}/24 — not yet, waiting 10s..."
+            sleep 10
+          done
+          echo "todo-staging never appeared after 240s — listing all applications:"
+          kubectl get applications -n argocd
+          exit 1
 
       - name: Verify todo-staging synced
         run: |
