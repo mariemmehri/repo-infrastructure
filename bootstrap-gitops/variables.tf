@@ -30,7 +30,7 @@ variable "gitops_target_revision" {
 variable "gitops_path" {
   description = "Chemin vers les applications ArgoCD"
   type        = string
-  default     = "apps/"
+  # default     = "apps/"
 }
 
 variable "argocd_chart_version" {

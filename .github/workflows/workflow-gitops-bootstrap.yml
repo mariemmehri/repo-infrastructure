@@ -174,6 +174,7 @@ jobs:
     name: "Apply — GitOps Bootstrap"
     needs: plan
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     if: |
       needs.plan.outputs.exitcode == '2' &&
       github.event_name != 'pull_request' &&
@@ -258,6 +259,13 @@ jobs:
       # ── ÉTAPE 4 : root-app maintenant que CRDs existent ──
       - name: Terraform Apply — root-app # maintenant que ArgoCD est prêt et que les CRDs existent, on applique le reste du plan pour créer l'Application app-of-apps
         run: terraform apply -auto-approve -no-color
+
+      - name: Release lock on failure    # nettoyage du lock Terraform en cas d'échec pour éviter de bloquer les runs suivants
+        if: failure()
+        run: |
+          gsutil rm -f \
+            gs://${{ vars.GCS_BUCKET_NAME }}/bootstrap/default.tflock \
+            2>/dev/null || echo "No lock to remove"
 
       # ── ÉTAPE 5 : vérifications finales ──────────────────
       - name: Verify root-app created 

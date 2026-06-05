@@ -34,7 +34,9 @@ data "google_project" "current" {
 # ═══════════════════════════════════════════════════════════
 # WORKLOAD IDENTITY POOL & PROVIDER
 # ═══════════════════════════════════════════════════════════
-
+# This creates the "identity provider" in GCP
+# Think of it as GCP saying:
+# "I will trust tokens from this specific source"
 resource "google_iam_workload_identity_pool" "github" {
   project                   = data.google_project.current.number
   workload_identity_pool_id = "github-pool-v2"
@@ -43,6 +45,7 @@ resource "google_iam_workload_identity_pool" "github" {
   depends_on                = [google_project_service.iam_credentials]
 }
 
+
 resource "google_iam_workload_identity_pool_provider" "github" {
   project                            = data.google_project.current.number
   workload_identity_pool_id          = google_iam_workload_identity_pool.github.workload_identity_pool_id
@@ -50,7 +53,7 @@ resource "google_iam_workload_identity_pool_provider" "github" {
   display_name                       = "GitHub Provider"
 
   attribute_mapping = {
-    "google.subject"       = "assertion.sub"
+    "google.subject"       = "assertion.sub" 
     "attribute.repository" = "assertion.repository"
     "attribute.ref"        = "assertion.ref"
   }

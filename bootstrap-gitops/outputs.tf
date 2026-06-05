@@ -1,7 +1,7 @@
 output "argocd_app_name" {
-  value = "app-of-apps"
+  value = "root-app"
 }
 
 output "argocd_sync_command" {
-  value = "argocd app sync app-of-apps"
+  value = "argocd app sync root-app"
 }
