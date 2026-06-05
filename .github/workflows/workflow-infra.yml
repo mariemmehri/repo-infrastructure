@@ -107,8 +107,6 @@ jobs:
           inputs.action != 'destroy-staging'
         )
 
-
-
     defaults:
       run:
         working-directory: ${{ env.TF_STAGING_DIR }}
@@ -250,14 +248,14 @@ jobs:
     name: "Apply — Infra (staging)"
     needs: plan
     runs-on: ubuntu-latest
-    timeout-minutes: 30 
+    timeout-minutes: 30
     if: |
       needs.plan.outputs.exitcode == '2' &&
       github.event_name != 'pull_request' &&
       (
         github.event_name == 'push' ||
         (github.event_name == 'workflow_dispatch' &&
-         inputs.action == 'apply')
+        inputs.action == 'apply')
       )
 
     defaults:
@@ -278,7 +276,10 @@ jobs:
           workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ secrets.SERVICE_ACCOUNT_EMAIL }}
 
-      
+      - uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ vars.GCP_PROJECT_ID }}
+
       - name: Download plan artifact
         uses: actions/download-artifact@v4
         with:
@@ -293,33 +294,30 @@ jobs:
             -reconfigure -input=false -no-color
 
       - name: Terraform Apply
-        working-directory: environments/staging
         run: terraform apply -auto-approve -no-color tfplan.binary
-      
+
       - name: Release lock on failure
         if: failure()
         run: |
-          gsutil rm -f \
-            gs://${{ vars.GCS_BUCKET_NAME }}/staging/default.tflock \
+          terraform force-unlock -force \
+            $(gsutil cat gs://${{ vars.GCS_BUCKET_NAME }}/staging/default.tflock \
+              2>/dev/null | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['ID'])" \
+              2>/dev/null || echo "") \
             2>/dev/null || echo "No lock to remove"
-        # ::
 
-      - name: Install plugin, get credentials and wait for GKE
+      - name: Get GKE credentials
+        uses: google-github-actions/get-gke-credentials@v2
+        with:
+          cluster_name: ${{ vars.GKE_CLUSTER_NAME }}
+          location: ${{ vars.GCP_REGION }}-b
+          project_id: ${{ vars.GCP_PROJECT_ID }}
+
+      - name: Wait for GKE to be fully ready
         run: |
-          gcloud components install gke-gcloud-auth-plugin --quiet
-          export USE_GKE_GCLOUD_AUTH_PLUGIN=True
-          
-          gcloud container clusters get-credentials \
-            ${{ vars.GKE_CLUSTER_NAME }} \
-            --region ${{ vars.GCP_REGION }}-b \
-            --project ${{ vars.GCP_PROJECT_ID }}
-          
           kubectl wait --for=condition=Ready nodes \
             --all \
             --timeout=300s
-          
-          echo "✅ GKE cluster fully ready"
-
+          echo "GKE cluster fully ready"
   # ─────────────────────────────────────────────────────────
   # JOB 4 — DRIFT DETECTION
   # ─────────────────────────────────────────────────────────
