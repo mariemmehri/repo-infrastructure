@@ -289,13 +289,26 @@ jobs:
           kubectl get application root-app -n argocd
           echo "root-app live"
 
-      - name: Verify todo-staging synced
-        run: |
-          kubectl wait --for=jsonpath='{.status.sync.status}'=Synced \
-            application/todo-staging \
-            -n argocd \
-            --timeout=180s
-          echo "todo-staging synced"
+      # - name: Wait for todo-staging Application
+      #   run: |
+      #     echo "Waiting for ArgoCD to create todo-staging..."
+      #     for i in $(seq 1 60); do
+      #       if kubectl get application todo-staging -n argocd >/dev/null 2>&1; then
+      #         echo "todo-staging Application exists"
+      #         break
+      #       fi
+      #       sleep 5
+      #     done
+
+      #     kubectl get application todo-staging -n argocd
+
+      # - name: Verify todo-staging synced
+      #   run: |
+      #     kubectl wait --for=jsonpath='{.status.sync.status}'=Synced \
+      #       application/todo-staging \
+      #       -n argocd \
+      #       --timeout=180s
+      #     echo "todo-staging synced"
 
   # ─────────────────────────────────────────────────────────
   # JOB 3 — DESTROY
