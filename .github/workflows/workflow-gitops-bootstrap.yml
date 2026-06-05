@@ -316,13 +316,27 @@ jobs:
           kubectl get applications -n argocd
           exit 1
 
-      - name: Verify todo-staging synced
+      - name: Wait for todo-staging ready (sync + health)
         run: |
-          kubectl wait --for=jsonpath='{.status.sync.status}'=Synced \
-            application/todo-staging \
-            -n argocd \
-            --timeout=180s
-          echo "todo-staging synced"
+          echo "Waiting for todo-staging to be Synced + Healthy..."
+
+          for i in $(seq 1 60); do
+            SYNC=$(kubectl get application todo-staging -n argocd -o jsonpath='{.status.sync.status}' 2>/dev/null)
+            HEALTH=$(kubectl get application todo-staging -n argocd -o jsonpath='{.status.health.status}' 2>/dev/null)
+
+            echo "Attempt $i -> sync=$SYNC health=$HEALTH"
+
+            if [ "$SYNC" = "Synced" ] && [ "$HEALTH" = "Healthy" ]; then
+              echo "todo-staging ready"
+              exit 0
+            fi
+
+            sleep 10
+          done
+
+          echo "ERROR: todo-staging not ready in time"
+          kubectl describe application todo-staging -n argocd || true
+          exit 1
 
   # ─────────────────────────────────────────────────────────
   # JOB 3 — DESTROY
