@@ -36,5 +36,5 @@ variable "gitops_path" {
 variable "argocd_chart_version" {
   description = "Version du chart Helm ArgoCD"
   type        = string
-  default     = "6.7.3"
+  default     = "7.8.26"
 }
