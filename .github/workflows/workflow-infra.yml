@@ -329,10 +329,19 @@ jobs:
     name: "Bootstrap ArgoCD"
     needs: apply
     runs-on: ubuntu-latest
+    # always() nécessaire pour tourner même quand apply est skipped.
+    # apply est skipped quand plan exitcode=0 (infra déjà à jour).
+    # Dans ce cas, le cluster existe déjà — bootstrap doit quand même vérifier ArgoCD.
     if: |
-      needs.apply.result == 'success' ||
-      (github.event_name == 'workflow_dispatch' &&
-       inputs.action == 'bootstrap')
+      always() &&
+      (
+        needs.apply.result == 'success' ||
+        (
+          needs.apply.result == 'skipped' &&
+          github.event_name == 'workflow_dispatch' &&
+          inputs.action == 'bootstrap'
+        )
+      )
 
     steps:
       - uses: actions/checkout@v4
@@ -399,8 +408,19 @@ jobs:
         if: steps.check.outputs.already_bootstrapped == 'false'
         run: kubectl apply -f "https://raw.githubusercontent.com/${{ vars.GITOPS_REPO }}/main/apps/root-app.yaml"
 
-      - name: Verify root-app
-        run: kubectl get application root-app -n argocd
+      - name: Verify ArgoCD and root-app
+        run: |
+          echo "=== ArgoCD pods ==="
+          kubectl get pods -n argocd
+
+          echo ""
+          echo "=== ArgoCD Applications ==="
+          kubectl get applications -n argocd
+
+          echo ""
+          echo "=== root-app sync status ==="
+          kubectl get application root-app -n argocd \
+            -o jsonpath='SyncStatus: {.status.sync.status}{"\n"}Health: {.status.health.status}{"\n"}'
 
   # ─────────────────────────────────────────────────────────
   # JOB 4 — DRIFT DETECTION
