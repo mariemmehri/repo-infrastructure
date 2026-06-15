@@ -327,21 +327,17 @@ jobs:
   # ─────────────────────────────────────────────────────────
   bootstrap-argocd:
     name: "Bootstrap ArgoCD"
-    needs: apply
+    needs: [plan, apply]
     runs-on: ubuntu-latest
     # always() nécessaire pour tourner même quand apply est skipped.
     # apply est skipped quand plan exitcode=0 (infra déjà à jour).
-    # Dans ce cas, le cluster existe déjà — bootstrap doit quand même vérifier ArgoCD.
+    # Le check interne "already_bootstrapped" rend le job rapide (~5s)
+    # si ArgoCD tourne déjà — pas de réinstallation inutile.
     if: |
       always() &&
-      (
-        needs.apply.result == 'success' ||
-        (
-          needs.apply.result == 'skipped' &&
-          github.event_name == 'workflow_dispatch' &&
-          inputs.action == 'bootstrap'
-        )
-      )
+      needs.apply.result != 'failure' &&
+      needs.plan.result != 'failure' &&
+      github.event_name != 'pull_request'
 
     steps:
       - uses: actions/checkout@v4
