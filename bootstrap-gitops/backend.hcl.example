@@ -1,4 +1,0 @@
-# Copier en backend.hcl — Ne JAMAIS commiter backend.hcl
-
-bucket = "tfstate-pfe-gitops-2024"
-prefix = "bootstrap"

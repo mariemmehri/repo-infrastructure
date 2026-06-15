@@ -21,11 +21,11 @@ on:
   workflow_dispatch:
     inputs:
       action:
-        description: "plan | apply | destroy-staging | drift"
+        description: "plan | apply | destroy-staging | drift | bootstrap"
         required: true
         default: "plan"
         type: choice
-        options: [plan, apply, destroy-staging, drift]
+        options: [plan, apply, destroy-staging, drift, bootstrap]
 
 concurrency:
   group: terraform-infra-${{ github.ref }}
@@ -42,6 +42,7 @@ env:
   TF_IN_AUTOMATION: "true"
   TF_INPUT: "false"
   TF_STAGING_DIR: "environments/staging"
+  ARGOCD_CHART_VERSION: "6.7.3"
 
 jobs:
   # ─────────────────────────────────────────────────────────
@@ -65,7 +66,7 @@ jobs:
         run: |
           for d in backend-config environments/staging \
                    modules/gke modules/networking \
-                   modules/artifact_registry modules/argocd; do
+                   modules/artifact_registry; do
             [ -d "$d" ] || continue
             echo "── Validating: $d"
             (cd "$d" && \
@@ -98,14 +99,14 @@ jobs:
     needs: validate
     runs-on: ubuntu-latest
     if: |
-        (
-          github.event_name != 'pull_request' ||
-          github.event.pull_request.head.repo.fork == false
-        ) &&
-        (
-          github.event_name != 'workflow_dispatch' ||
-          inputs.action != 'destroy-staging'
-        )
+      (
+        github.event_name != 'pull_request' ||
+        github.event.pull_request.head.repo.fork == false
+      ) &&
+      (
+        github.event_name != 'workflow_dispatch' ||
+        inputs.action != 'destroy-staging'
+      )
 
     defaults:
       run:
@@ -127,7 +128,6 @@ jobs:
         with:
           workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ secrets.SERVICE_ACCOUNT_EMAIL }}
-
 
       - uses: google-github-actions/setup-gcloud@v2
         with:
@@ -318,6 +318,92 @@ jobs:
             --all \
             --timeout=300s
           echo "GKE cluster fully ready"
+
+  # ─────────────────────────────────────────────────────────
+  # JOB 3B — BOOTSTRAP ARGOCD
+  # Remplace le module bootstrap-gitops Terraform.
+  # Toutes les étapes sont idempotentes — safe à relancer.
+  # Déclenché : après apply réussi OU manuellement via bootstrap.
+  # ─────────────────────────────────────────────────────────
+  bootstrap-argocd:
+    name: "Bootstrap ArgoCD"
+    needs: apply
+    runs-on: ubuntu-latest
+    if: |
+      needs.apply.result == 'success' ||
+      (github.event_name == 'workflow_dispatch' &&
+       inputs.action == 'bootstrap')
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.SERVICE_ACCOUNT_EMAIL }}
+
+      - name: Get GKE credentials
+        uses: google-github-actions/get-gke-credentials@v2
+        with:
+          cluster_name: ${{ vars.GKE_CLUSTER_NAME }}
+          location: ${{ vars.GCP_REGION }}-b
+          project_id: ${{ vars.GCP_PROJECT_ID }}
+
+      - name: Check if ArgoCD already bootstrapped
+        id: check
+        run: |
+          FORCE="${{ github.event_name == 'workflow_dispatch' && inputs.action == 'bootstrap' }}"
+          if [ "$FORCE" = "true" ]; then
+            echo "already_bootstrapped=false" >> "$GITHUB_OUTPUT"
+            echo "Force bootstrap requested — running full bootstrap"
+          elif kubectl get namespace argocd &>/dev/null && \
+               kubectl get application root-app -n argocd &>/dev/null; then
+            echo "already_bootstrapped=true" >> "$GITHUB_OUTPUT"
+            echo "ArgoCD already running — skipping bootstrap"
+          else
+            echo "already_bootstrapped=false" >> "$GITHUB_OUTPUT"
+            echo "ArgoCD not found — bootstrap needed"
+          fi
+
+      - name: Install ArgoCD via Helm
+        if: steps.check.outputs.already_bootstrapped == 'false'
+        run: |
+          kubectl create namespace argocd --dry-run=client -o yaml | kubectl apply -f -
+          helm repo add argo https://argoproj.github.io/argo-helm --force-update
+          helm upgrade --install argocd argo/argo-cd \
+            --version ${{ env.ARGOCD_CHART_VERSION }} \
+            --namespace argocd \
+            --set server.service.type=ClusterIP \
+            --wait \
+            --timeout 600s
+
+      - name: Wait for ArgoCD CRDs
+        if: steps.check.outputs.already_bootstrapped == 'false'
+        run: |
+          kubectl wait --for=condition=established \
+            crd/applications.argoproj.io \
+            --timeout=120s
+          echo "CRDs ready"
+
+      - name: Wait for ArgoCD server
+        if: steps.check.outputs.already_bootstrapped == 'false'
+        run: |
+          kubectl wait --for=condition=Ready pods \
+            -l app.kubernetes.io/name=argocd-server \
+            -n argocd \
+            --timeout=300s
+          echo "ArgoCD server ready"
+
+      - name: Apply root-app
+        if: steps.check.outputs.already_bootstrapped == 'false'
+        run: |
+          kubectl apply -f \
+            https://raw.githubusercontent.com/${{ vars.GITOPS_REPO }}/main/apps/root-app.yaml
+
+      - name: Verify root-app
+        run: kubectl get application root-app -n argocd
+
   # ─────────────────────────────────────────────────────────
   # JOB 4 — DRIFT DETECTION
   # ─────────────────────────────────────────────────────────
@@ -435,7 +521,6 @@ jobs:
       github.event_name == 'workflow_dispatch' &&
       inputs.action == 'destroy-staging'
     environment: staging-destroy
-
     steps:
       - uses: actions/checkout@v4
 
@@ -475,7 +560,7 @@ jobs:
       - name: Check GitOps is already destroyed
         run: |
           echo "Checking ArgoCD..."
-          kubectl get application app-of-apps -n argocd && {
+          kubectl get application root-app -n argocd && {
             echo "GitOps still exists — destroy blocked"
             exit 1
           } || echo "GitOps already removed"
