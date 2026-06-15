@@ -337,7 +337,8 @@ jobs:
       always() &&
       needs.apply.result != 'failure' &&
       needs.plan.result != 'failure' &&
-      github.event_name != 'pull_request'
+      github.event_name != 'pull_request' &&
+      (github.event_name != 'workflow_dispatch' || inputs.action != 'destroy-staging')
 
     steps:
       - uses: actions/checkout@v4
