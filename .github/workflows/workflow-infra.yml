@@ -400,9 +400,16 @@ jobs:
             --timeout=300s
           echo "ArgoCD server ready"
 
+      - name: Checkout todo-config
+        if: steps.check.outputs.already_bootstrapped == 'false'
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ vars.GITOPS_REPO }}
+          path: repo-config
+
       - name: Apply root-app
         if: steps.check.outputs.already_bootstrapped == 'false'
-        run: kubectl apply -f "https://raw.githubusercontent.com/${{ vars.GITOPS_REPO }}/main/apps/root-app.yaml"
+        run: kubectl apply -f repo-config/apps/root-app.yaml
 
       - name: Verify ArgoCD and root-app
         run: |
