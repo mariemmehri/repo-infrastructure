@@ -5,4 +5,6 @@ region        = "europe-west1"
 cluster_name  = "gke-staging-pfe"
 node_count    = 1
 node_vm_size  = "e2-small"
+disk_size_gb  = 30
+release_channel = "REGULAR"
 registry_name = "registry-staging-pfe"

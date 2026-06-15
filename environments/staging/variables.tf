@@ -26,12 +26,19 @@ variable "node_vm_size" {
   default     = "e2-standard-2"
 }
 
+variable "disk_size_gb" {
+  description = "Boot disk size for GKE nodes in GB"
+  type        = number
+  default     = 30
+}
+
+variable "release_channel" {
+  description = "GKE release channel"
+  type        = string
+  default     = "REGULAR"
+}
+
 variable "registry_name" {
   description = "Nom du repository Artifact Registry"
   type        = string
-}
-variable "argocd_chart_version" {
-  description = "Version du chart Helm ArgoCD"
-  type        = string
-  default     = "6.7.3"
 }

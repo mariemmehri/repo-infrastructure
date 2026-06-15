@@ -569,6 +569,8 @@ jobs:
           cluster_name  = "${{ vars.GKE_CLUSTER_NAME }}"
           registry_name = "${{ vars.GAR_REPOSITORY_NAME }}"
           region        = "${{ vars.GCP_REGION }}"
+          node_count    = ${{ vars.NODE_COUNT }}
+          node_vm_size  = "${{ vars.NODE_VM_SIZE }}"
           EOF
       - name: Terraform Init
         working-directory: ${{ env.TF_STAGING_DIR }}
@@ -589,7 +591,7 @@ jobs:
             kubectl patch application root-app -n argocd \
               -p '{"metadata":{"finalizers":null}}' \
               --type=merge
-            kubectl delete application root-app -n argocd --timeout=30s
+            kubectl delete application root-app -n argocd --timeout=30s --ignore-not-found
             echo "root-app deleted"
           else
             echo "root-app not found — skipping"

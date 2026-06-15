@@ -36,6 +36,10 @@ resource "google_container_cluster" "gke" {
   networking_mode     = "VPC_NATIVE"
   ip_allocation_policy {}
 
+  release_channel {
+    channel = upper(var.release_channel)
+  }
+
   workload_identity_config {
     workload_pool = "${var.project_id}.svc.id.goog"
   }
@@ -61,7 +65,7 @@ resource "google_container_node_pool" "default" {
 
   node_config {
     machine_type    = var.node_vm_size
-    disk_size_gb    = 30
+    disk_size_gb    = var.disk_size_gb
     service_account = google_service_account.gke_nodes.email
     spot            = true
 
