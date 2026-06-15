@@ -397,9 +397,7 @@ jobs:
 
       - name: Apply root-app
         if: steps.check.outputs.already_bootstrapped == 'false'
-        run: |
-          kubectl apply -f \
-            https://raw.githubusercontent.com/${{ vars.GITOPS_REPO }}/main/apps/root-app.yaml
+        run: kubectl apply -f "https://raw.githubusercontent.com/${{ vars.GITOPS_REPO }}/main/apps/root-app.yaml"
 
       - name: Verify root-app
         run: kubectl get application root-app -n argocd
@@ -557,13 +555,25 @@ jobs:
             -backend-config="prefix=staging" \
             -reconfigure -input=false -no-color
 
-      - name: Check GitOps is already destroyed
+      - name: Graceful ArgoCD cleanup before cluster destruction
         run: |
-          echo "Checking ArgoCD..."
-          kubectl get application root-app -n argocd && {
-            echo "GitOps still exists — destroy blocked"
-            exit 1
-          } || echo "GitOps already removed"
+          # Supprimer root-app → ArgoCD cascade-delete tous les enfants
+          # (todo-staging, namespace staging, tous les pods)
+          if kubectl get application root-app -n argocd &>/dev/null; then
+            echo "Deleting root-app — ArgoCD will cascade-delete all children..."
+            kubectl delete application root-app -n argocd --timeout=120s
+            echo "root-app deleted"
+          else
+            echo "ArgoCD not found — skipping cleanup"
+          fi
+
+          # Désinstaller ArgoCD proprement
+          if helm status argocd -n argocd &>/dev/null; then
+            echo "Uninstalling ArgoCD..."
+            helm uninstall argocd -n argocd --timeout 120s
+            kubectl delete namespace argocd --timeout=60s --ignore-not-found
+            echo "ArgoCD uninstalled"
+          fi
 
       - name: Terraform Destroy
         working-directory: ${{ env.TF_STAGING_DIR }}
