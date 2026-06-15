@@ -580,17 +580,21 @@ jobs:
 
       - name: Graceful ArgoCD cleanup before cluster destruction
         run: |
-          # Supprimer root-app → ArgoCD cascade-delete tous les enfants
-          # (todo-staging, namespace staging, tous les pods)
           if kubectl get application root-app -n argocd &>/dev/null; then
-            echo "Deleting root-app — ArgoCD will cascade-delete all children..."
-            kubectl delete application root-app -n argocd --timeout=120s
+            # Strip the cascade-delete finalizer before deleting.
+            # The finalizer blocks deletion until ArgoCD removes every child
+            # resource — which can take minutes. Since we are destroying the
+            # entire cluster, GCP will clean everything up; no cascade needed.
+            echo "Removing finalizer from root-app..."
+            kubectl patch application root-app -n argocd \
+              -p '{"metadata":{"finalizers":null}}' \
+              --type=merge
+            kubectl delete application root-app -n argocd --timeout=30s
             echo "root-app deleted"
           else
-            echo "ArgoCD not found — skipping cleanup"
+            echo "root-app not found — skipping"
           fi
 
-          # Désinstaller ArgoCD proprement
           if helm status argocd -n argocd &>/dev/null; then
             echo "Uninstalling ArgoCD..."
             helm uninstall argocd -n argocd --timeout 120s
