@@ -33,3 +33,4 @@ skip-check:
   - CKV_GCP_49   # TODO [C3] sa-terraform-ci holds serviceAccountUser role at project level
   - CKV_GCP_84   # SKIP staging — CSEK on Artifact Registry not required; Google-managed encryption sufficient
   - CKV_GCP_47   # SKIP staging — RBAC with Google Groups requires Cloud Identity setup outside PFE scope
+  - CKV_GCP_62   # SKIP — tfstate bucket logs to tfstate_logs; tfstate_logs itself cannot log without circular dependency
