@@ -3,8 +3,7 @@ framework:
 
 directory: .
 
-# Full detail needed for SARIF and JUnit reports.
-# compact strips the evidence lines that make reports readable.
+# compact strips the evidence lines that make SARIF findings readable in Code Scanning.
 compact: false
 quiet: false
 
@@ -14,10 +13,10 @@ download-external-modules: false
 # ── Severity gating ────────────────────────────────────────
 # CRITICAL / HIGH  → hard fail  (pipeline blocked)
 # MEDIUM / LOW     → soft fail  (reported, never blocks)
-soft-fail: true
-hard-fail-on:
-  - CRITICAL
-  - HIGH
+soft-fail-on:
+  - MEDIUM
+  - LOW
+  - INFO
 # ── Documented skips ───────────────────────────────────────
 # Every skip MUST reference the audit item that will fix the
 # underlying resource. Remove the skip when the fix is merged.

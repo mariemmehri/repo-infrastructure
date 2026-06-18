@@ -116,8 +116,6 @@ jobs:
 
       - name: Run Checkov
         uses: bridgecrewio/checkov-action@v12.2847.0
-        continue-on-error: true
-        id: checkov
         with:
           config_file: .checkov.yaml
           output_format: cli,sarif
@@ -139,12 +137,6 @@ jobs:
           name: checkov-scan-${{ github.run_number }}
           path: results.sarif
           retention-days: 30
-
-      - name: Fail job if Checkov found hard-fail issues
-        if: steps.checkov.outcome == 'failure'
-        run: |
-          echo "Checkov found CRITICAL/HIGH issues — failing job after uploading reports."
-          exit 1
 
   # ─────────────────────────────────────────────────────────
   # JOB 2 — PLAN PHASE A

@@ -1,6 +1,7 @@
 terraform {
   # Backend LOCAL intentionnellement
   # même logique poulet/oeuf qu'Azure
+  required_version = ">= 1.7.0"
   required_providers {
     google = {
       source  = "hashicorp/google"
