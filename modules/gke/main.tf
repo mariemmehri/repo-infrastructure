@@ -72,6 +72,15 @@ resource "google_container_cluster" "gke" {
     evaluation_mode = "PROJECT_SINGLETON_POLICY_ENFORCE"
   }
 
+  # CKV_GCP_25 — restrict which CIDRs can reach the Kubernetes API
+  # 0.0.0.0/0 required for GitHub Actions (dynamic IPs); tighten post-PFE
+  master_authorized_networks_config {
+    cidr_blocks {
+      cidr_block   = "0.0.0.0/0"
+      display_name = "allow-all"
+    }
+  }
+
   resource_labels = {
     environment = var.environment
     managed-by  = "terraform"
@@ -111,6 +120,11 @@ resource "google_container_node_pool" "default" {
     shielded_instance_config {
       enable_secure_boot          = true
       enable_integrity_monitoring = true
+    }
+
+    # CKV_GCP_70 — use GKE metadata server to protect node metadata from pods
+    workload_metadata_config {
+      mode = "GKE_METADATA"
     }
   }
 

@@ -34,6 +34,12 @@ resource "google_storage_bucket" "tfstate" {
   }
 
   uniform_bucket_level_access = true
+  public_access_prevention    = "enforced"
+
+  logging {
+    log_bucket        = var.bucket_name
+    log_object_prefix = "access-logs/"
+  }
 
   labels = {
     purpose    = "terraform-remote-backend"
