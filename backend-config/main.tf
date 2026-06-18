@@ -15,6 +15,21 @@ provider "google" {
   region  = var.region
 }
 
+resource "google_storage_bucket" "tfstate_logs" {
+  name          = "${var.bucket_name}-logs"
+  location      = var.region
+  force_destroy = false
+
+  uniform_bucket_level_access = true
+  public_access_prevention    = "enforced"
+
+  labels = {
+    purpose    = "terraform-state-access-logs"
+    managed-by = "terraform"
+    project    = "pfe"
+  }
+}
+
 resource "google_storage_bucket" "tfstate" {
   name          = var.bucket_name
   location      = var.region
@@ -37,8 +52,8 @@ resource "google_storage_bucket" "tfstate" {
   public_access_prevention    = "enforced"
 
   logging {
-    log_bucket        = var.bucket_name
-    log_object_prefix = "access-logs/"
+    log_bucket        = google_storage_bucket.tfstate_logs.name
+    log_object_prefix = "tfstate-access/"
   }
 
   labels = {
