@@ -54,6 +54,24 @@ resource "google_container_cluster" "gke" {
     workload_pool = "${var.project_id}.svc.id.goog"
   }
 
+  # CKV_GCP_13 — disable client certificate auth; rely on OIDC/WIF instead
+  master_auth {
+    client_certificate_config {
+      issue_client_certificate = false
+    }
+  }
+
+  # CKV_GCP_65 — enforce Kubernetes NetworkPolicy via Calico
+  network_policy {
+    enabled  = true
+    provider = "CALICO"
+  }
+
+  # CKV_GCP_66 — enforce project-level Binary Authorization policy
+  binary_authorization {
+    evaluation_mode = "PROJECT_SINGLETON_POLICY_ENFORCE"
+  }
+
   resource_labels = {
     environment = var.environment
     managed-by  = "terraform"
@@ -87,6 +105,12 @@ resource "google_container_node_pool" "default" {
     labels = {
       environment = var.environment
       managed-by  = "terraform"
+    }
+
+    # CKV_GCP_68/69/70 — shielded nodes: secure boot + integrity monitoring
+    shielded_instance_config {
+      enable_secure_boot          = true
+      enable_integrity_monitoring = true
     }
   }
 
