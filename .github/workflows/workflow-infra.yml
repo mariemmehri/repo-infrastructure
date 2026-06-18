@@ -36,6 +36,7 @@ permissions:
   id-token: write
   pull-requests: write
   issues: write
+  security-events: write
 
 env:
   TF_VERSION: "1.7.5"
@@ -46,7 +47,7 @@ env:
 
 jobs:
   # ─────────────────────────────────────────────────────────
-  # JOB 1 — VALIDATE
+  # JOB 1 — VALIDATE  (fmt + terraform validate only — fast gate ~30s)
   # ─────────────────────────────────────────────────────────
   validate:
     name: "Validate"
@@ -74,29 +75,83 @@ jobs:
               terraform validate -no-color)
           done
 
+  # ─────────────────────────────────────────────────────────
+  # JOB 1B — LINT  (tflint — runs in parallel with security)
+  # ─────────────────────────────────────────────────────────
+  lint:
+    name: "Lint (tflint)"
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
       - uses: terraform-linters/setup-tflint@v4
         with:
           tflint_version: v0.50.3
 
       - name: Run tflint
         run: tflint --recursive --format compact
-        continue-on-error: true
+
+  # ─────────────────────────────────────────────────────────
+  # JOB 1C — SECURITY  (checkov — runs in parallel with lint)
+  #
+  # Gating:  CRITICAL/HIGH  → hard fail  (blocks plan + apply)
+  #          MEDIUM/LOW     → soft fail  (reported, never blocks)
+  #
+  # Native GitHub outputs — no third-party actions:
+  #   console  → job log      (immediate inline feedback)
+  #   sarif    → Code Scanning tab (persistent, inline PR annotations)
+  #   artifact → downloadable (30-day retention)
+  # ─────────────────────────────────────────────────────────
+  security:
+    name: "Security (checkov)"
+    needs: validate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write  # required for SARIF upload to Code Scanning
+
+    steps:
+      - uses: actions/checkout@v4
 
       - name: Run Checkov
-        uses: bridgecrewio/checkov-action@master
+        uses: bridgecrewio/checkov-action@v12.2847.0
+        continue-on-error: true
+        id: checkov
         with:
-          directory: .
-          framework: terraform
-          output_format: cli
-          soft_fail: true
-          skip_check: CKV_GCP_25,CKV_GCP_71
+          config_file: .checkov.yaml
+          output_format: cli,sarif
+          output_file_path: console,results.sarif
+
+      # Layer 1 — GitHub Code Scanning (Security tab + inline PR annotations)
+      - name: Upload SARIF to GitHub Code Scanning
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: results.sarif
+          category: checkov-terraform
+
+      # Layer 3 — Downloadable artifact (30-day retention)
+      - name: Upload scan artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: checkov-scan-${{ github.run_number }}
+          path: results.sarif
+          retention-days: 30
+
+      - name: Fail job if Checkov found hard-fail issues
+        if: steps.checkov.outcome == 'failure'
+        run: |
+          echo "Checkov found CRITICAL/HIGH issues — failing job after uploading reports."
+          exit 1
 
   # ─────────────────────────────────────────────────────────
   # JOB 2 — PLAN PHASE A
   # ─────────────────────────────────────────────────────────
   plan:
     name: "Plan — Infra (staging)"
-    needs: validate
+    needs: [validate, lint, security]
     runs-on: ubuntu-latest
     if: |
       (
@@ -191,6 +246,14 @@ jobs:
       - name: Convert plan to JSON
         if: steps.plan.outputs.exitcode == '2'
         run: terraform show -json tfplan.binary > tfplan.json
+      - name: Write plan summary
+        if: steps.plan.outputs.exitcode == '2'
+        run: |
+          echo "## Terraform Plan — Infra staging" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          terraform show -no-color tfplan.binary >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload plan artifact
         if: steps.plan.outputs.exitcode == '2'
@@ -262,6 +325,7 @@ jobs:
     needs: plan
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    environment: staging-apply  
     if: |
       needs.plan.outputs.exitcode == '2' &&
       github.event_name != 'pull_request' &&

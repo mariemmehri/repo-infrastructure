@@ -1,0 +1,32 @@
+framework:
+  - terraform
+
+directory: .
+
+# Full detail needed for SARIF and JUnit reports.
+# compact strips the evidence lines that make reports readable.
+compact: false
+quiet: false
+
+# Never pull remote modules during CI — supply-chain risk.
+download-external-modules: false
+
+# ── Severity gating ────────────────────────────────────────
+# CRITICAL / HIGH  → hard fail  (pipeline blocked)
+# MEDIUM / LOW     → soft fail  (reported, never blocks)
+soft-fail: true
+hard-fail-on:
+  - CRITICAL
+  - HIGH
+# ── Documented skips ───────────────────────────────────────
+# Every skip MUST reference the audit item that will fix the
+# underlying resource. Remove the skip when the fix is merged.
+skip-check:
+  - CKV_GCP_25   # TODO [C2] add logging_config   to modules/gke/main.tf
+  - CKV_GCP_71   # TODO [C2] add monitoring_config to modules/gke/main.tf
+  - CKV_GCP_61   # TODO [C4] enable private_cluster_config in modules/gke/main.tf
+  - CKV_GCP_18   # TODO [H4] add secondary_ip_range blocks to modules/networking/main.tf
+  - CKV_GCP_76   # TODO [H8] add VPC firewall deny-all baseline to modules/networking/main.tf
+  - CKV_GCP_12   # TODO [H8] add explicit ingress firewall rules
+  - CKV_GCP_8    # TODO [H7] enable node auto-repair in node pool
+  - CKV_GCP_9    # TODO [H7] enable node auto-upgrade in node pool
