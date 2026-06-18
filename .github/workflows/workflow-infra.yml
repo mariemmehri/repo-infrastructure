@@ -8,6 +8,7 @@ on:
       - "modules/**"
       - "backend-config/**"
       - ".github/workflows/workflow-infra.yml"
+      - ".checkov.yaml"
 
   pull_request:
     branches: [main]
