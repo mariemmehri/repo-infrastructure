@@ -125,7 +125,7 @@ jobs:
   #     # Layer 1 — GitHub Code Scanning (Security tab + inline PR annotations)
   #     - name: Upload SARIF to GitHub Code Scanning
   #       uses: github/codeql-action/upload-sarif@v3
-  #       if: always()
+  #       if
   #       with:
   #         sarif_file: results.sarif
   #         category: checkov-terraform
@@ -133,9 +133,9 @@ jobs:
   #     # Layer 3 — Downloadable artifact (30-day retention)
   #     - name: Upload scan artifact
   #       uses: actions/upload-artifact@v4
-  #       if: always()
+        # if
   #       with:
-  #         name: checkov-scan-${{ github.run_number }}
+  #         name: checkov-scan-{{ github.run_number }}
   #         path: results.sarif
   #         retention-days: 30
 
