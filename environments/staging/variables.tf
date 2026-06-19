@@ -42,3 +42,9 @@ variable "registry_name" {
   description = "Nom du repository Artifact Registry"
   type        = string
 }
+
+variable "developer_group_email" {
+  description = "Google group email for developer kubectl read access (staging only, null disables)"
+  type        = string
+  default     = null
+}

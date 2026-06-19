@@ -84,7 +84,6 @@ locals {
     "roles/artifactregistry.admin",
     "roles/storage.admin",
     "roles/iam.serviceAccountAdmin",
-    "roles/iam.serviceAccountUser",
     "roles/resourcemanager.projectIamAdmin",
   ]
 }

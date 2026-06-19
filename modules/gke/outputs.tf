@@ -37,13 +37,3 @@ output "kube_cluster_ca_certificate" {
   value     = google_container_cluster.gke.master_auth[0].cluster_ca_certificate
   sensitive = true
 }
-# ─── Nouveaux ───────────────────────────────────────────────
-output "gke_nodes_sa_email" {
-  description = "Email du Service Account des nodes GKE"
-  value       = google_service_account.gke_nodes.email
-}
-
-output "gke_nodes_sa_name" {
-  description = "Nom complet du Service Account des nodes GKE"
-  value       = google_service_account.gke_nodes.name
-}

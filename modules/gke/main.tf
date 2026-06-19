@@ -9,21 +9,6 @@ terraform {
   }
 }
 
-# Service Account dédié pour les nodes GKE
-# Equivalent du SystemAssigned Identity AKS
-resource "google_service_account" "gke_nodes" {
-  account_id   = "sa-gke-${var.environment}-pfe"
-  display_name = "GKE Nodes SA - ${var.environment}"
-  project      = var.project_id
-}
-
-# Permission pour puller les images depuis Artifact Registry
-# Equivalent du role assignment AcrPull sur Azure
-resource "google_project_iam_member" "artifact_registry_reader" {
-  project = var.project_id
-  role    = "roles/artifactregistry.reader"
-  member  = "serviceAccount:${google_service_account.gke_nodes.email}"
-}
 data "google_client_config" "default" {}
 
 
@@ -97,7 +82,7 @@ resource "google_container_cluster" "gke" {
   }
 }
 
-# Node pool séparé — équivalent du default_node_pool AKS
+# Node pool séparé 
 resource "google_container_node_pool" "default" {
   name           = "default"
   cluster        = google_container_cluster.gke.id
@@ -113,7 +98,7 @@ resource "google_container_node_pool" "default" {
   node_config {
     machine_type    = var.node_vm_size
     disk_size_gb    = var.disk_size_gb
-    service_account = google_service_account.gke_nodes.email
+    service_account = var.gke_nodes_sa_email
     spot            = true
 
 
@@ -138,7 +123,4 @@ resource "google_container_node_pool" "default" {
     }
   }
 
-  depends_on = [
-    google_project_iam_member.artifact_registry_reader
-  ]
 }

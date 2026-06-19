@@ -57,6 +57,11 @@ variable "gke_subnet_id" {
   type        = string
 }
 
+variable "gke_nodes_sa_email" {
+  description = "Email of the GKE nodes service account (created by modules/iam)"
+  type        = string
+}
+
 # variable "acr_id" {
 #   description = "ID Artifact Registry (utilisé pour IAM binding)"
 #   type        = string
