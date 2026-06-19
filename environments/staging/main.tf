@@ -22,17 +22,17 @@ module "iam" {
 }
 
 module "gke" {
-  source              = "../../modules/gke"
-  cluster_name        = var.cluster_name
-  project_id          = var.project_id
-  region              = var.region
-  environment         = "staging"
-  node_count          = var.node_count
-  node_vm_size        = var.node_vm_size
-  disk_size_gb        = var.disk_size_gb
-  release_channel     = var.release_channel
-  vpc_name            = module.networking.vpc_name
-  gke_subnet_id       = module.networking.gke_subnet_id
-  gke_nodes_sa_email  = module.iam.gke_nodes_sa_email
-  depends_on          = [module.networking, module.iam]
+  source             = "../../modules/gke"
+  cluster_name       = var.cluster_name
+  project_id         = var.project_id
+  region             = var.region
+  environment        = "staging"
+  node_count         = var.node_count
+  node_vm_size       = var.node_vm_size
+  disk_size_gb       = var.disk_size_gb
+  release_channel    = var.release_channel
+  vpc_name           = module.networking.vpc_name
+  gke_subnet_id      = module.networking.gke_subnet_id
+  gke_nodes_sa_email = module.iam.gke_nodes_sa_email
+  depends_on         = [module.networking, module.iam]
 }
