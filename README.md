@@ -1,19 +1,18 @@
 # repo-infrastructure — Infrastructure as Code GCP
 
 Infrastructure complète Google Cloud Platform pour l'environnement staging de la plateforme Todo GitOps.  
-Terraform 1.7.5 — Backend GCS — Workload Identity Federation.
+Terraform 1.7.5 — Backend GCS — Workload Identity Federation — ArgoCD bootstrappé via GitHub Actions.
 
 ---
 
 ## Vue d'ensemble
 
-Ce dépôt gère deux responsabilités distinctes, chacune avec son propre state Terraform :
+Ce dépôt gère deux responsabilités distinctes avec des cycles de vie séparés :
 
-| Phase | Répertoire | Responsabilité |
-|-------|-----------|----------------|
-| **Pré-requis** (run once) | `backend-config/` | GCS state bucket + Workload Identity Federation |
-| **Phase A** | `environments/staging/` | VPC, GKE cluster, Artifact Registry |
-| **Phase B** | `bootstrap-gitops/` | Installation ArgoCD + root-app ArgoCD |
+| Phase | Répertoire | Responsabilité | State |
+|-------|-----------|----------------|-------|
+| **Pré-requis** (run once) | `backend-config/` | GCS state bucket + Workload Identity Federation | local |
+| **Infra + GitOps** | `environments/staging/` | VPC, GKE, Artifact Registry, IAM + bootstrap ArgoCD | GCS `prefix=staging` |
 
 ---
 
@@ -27,28 +26,21 @@ repo-infrastructure/
 │   ├── variables.tf
 │   └── outputs.tf               # Valeurs à copier dans les secrets GitHub
 │
-├── environments/staging/        # Phase A — infra GCP
-│   ├── main.tf                  # Orchestration des 3 modules
+├── environments/staging/        # Seul root Terraform actif
+│   ├── main.tf                  # Orchestration des 4 modules
 │   ├── providers.tf             # Provider Google + backend GCS
 │   ├── variables.tf
-│   └── outputs.tf               # kubectl command, argocd_portforward...
+│   ├── outputs.tf               # kubectl command, argocd_portforward...
+│   └── moved.tf                 # Blocs moved — migration state IAM (supprimer après apply)
 │
 ├── modules/                     # Modules Terraform réutilisables
 │   ├── networking/              # VPC + subnet GKE
-│   ├── gke/                     # Cluster GKE + node pool + SA
-│   └── artifact_registry/       # Google Artifact Registry
+│   ├── gke/                     # Cluster GKE + node pool (pure compute)
+│   ├── artifact_registry/       # Google Artifact Registry
+│   └── iam/                     # Identités et IAM par environnement
 │
-├── bootstrap-gitops/            # Phase B — ArgoCD bootstrap
-│   ├── main.tf                  # Namespace + Helm ArgoCD + root-app manifest
-│   ├── providers.tf             # Providers Helm + Kubernetes (lit GKE existant)
-│   ├── variables.tf
-│   └── outputs.tf
-│
-├── .github/workflows/
-│   ├── workflow-infra.yml           # CI/CD Phase A
-│   └── workflow-gitops-bootstrap.yml # CI/CD Phase B
-│
-└── .tflint.hcl                  # Configuration linter Terraform
+└── .github/workflows/
+    └── workflow-infra.yml       # Pipeline unique : infra + bootstrap ArgoCD
 ```
 
 ---
@@ -69,15 +61,7 @@ Ce répertoire crée l'infrastructure nécessaire pour que Terraform puisse stoc
 ```bash
 cd backend-config
 
-# Créer terraform.tfvars
-cat > terraform.tfvars <<EOF
-project_id       = "pfe-2026-495220"
-region           = "europe-west1"
-bucket_name      = "tfstate-pfe-2026"
-github_owner     = "mariemmehri"
-github_infra_repo = "repo-infrastructure"
-github_app_repo  = "todo-app"
-EOF
+cp terraform.tfvars.example terraform.tfvars  #Edit terraform.tfvars
 
 terraform init
 terraform apply
@@ -87,34 +71,30 @@ terraform apply
 - Bucket GCS `tfstate-pfe-2026` avec versioning (7 versions max)
 - Pool Workload Identity Federation `github-pool-v2`
 - Provider WIF `github-provider` (trust tokens OIDC de GitHub Actions)
-- Service Account `sa-terraform-ci` — droits : container.admin, compute.networkAdmin, artifactregistry.admin, iam.serviceAccountAdmin...
+- Service Account `sa-terraform-ci` — droits projet : container.admin, compute.networkAdmin, artifactregistry.admin, storage.admin, iam.serviceAccountAdmin, resourcemanager.projectIamAdmin
 - Service Account `sa-github-actions` — droits : artifactregistry.writer uniquement
+
+> Note : `iam.serviceAccountUser` n'est **pas** accordé à `sa-terraform-ci` au niveau projet. Ce droit est accordé précisément par `modules/iam/` sur chaque SA GKE d'environnement — principe du moindre privilège.
 
 **Après l'apply, copier les outputs dans les secrets GitHub :**
 
 ```bash
-terraform output workload_identity_provider  # → GCP_WORKLOAD_PROVIDER (infra + app)
+terraform output workload_identity_provider  # → WORKLOAD_IDENTITY_PROVIDER (infra)
 terraform output terraform_ci_sa_email       # → SERVICE_ACCOUNT_EMAIL (infra)
 terraform output github_actions_sa_email     # → GCP_SERVICE_ACCOUNT (app)
 ```
 
 ---
 
-## Phase A — Infrastructure GCP (`environments/staging/`)
+## Infra GCP — `environments/staging/`
 
-Provisionne les ressources cloud fondamentales.
+Provisionne toutes les ressources cloud fondamentales via 4 modules.
 
 ```bash
 cd environments/staging
 
-cat > terraform.tfvars <<EOF
-project_id    = "pfe-2026-495220"
-region        = "europe-west1"
-cluster_name  = "gke-staging-pfe"
-registry_name = "registry-staging-pfe"
-node_count    = 1
-node_vm_size  = "e2-standard-2"
-EOF
+cp terraform.tfvars.example terraform.tfvars  #Edit terraform.tfvars
+
 
 terraform init \
   -backend-config="bucket=tfstate-pfe-2026" \
@@ -131,153 +111,144 @@ terraform apply
 | VPC | `vpc-staging-pfe`, auto-create-subnetworks=false |
 | Subnet GKE | `subnet-gke-staging`, CIDR `10.0.1.0/24`, Private Google Access |
 | Artifact Registry | `registry-staging-pfe`, format DOCKER, `europe-west1` |
-| Service Account nodes | `sa-gke-staging-pfe`, rôle `artifactregistry.reader` |
+| Service Account nodes | `sa-gke-staging-pfe` — 5 rôles : artifactregistry.reader, logging.logWriter, monitoring.metricWriter, monitoring.viewer, stackdriver.resourceMetadata.writer |
 | GKE Cluster | VPC-native, Workload Identity activé, deletion_protection=false |
-| Node Pool | 1 nœud `e2-standard-2`, spot=true, autoscaling 1-1, disk 30 Go |
-| IAM Binding | `sa-terraform-ci` peut utiliser le SA GKE nodes |
+| Node Pool | 1 nœud `e2-standard-2`, spot=true, autoscaling 1-3, disk 30 Go |
+| IAM Binding | `sa-terraform-ci` → serviceAccountUser sur `sa-gke-staging-pfe` (SA-level) |
+| IAM Binding | `sa-terraform-ci` → serviceAccountUser sur le SA Compute Engine par défaut (requis par GKE au bootstrap) |
 
 ### Modules détaillés
 
 #### `modules/networking/`
 
-Crée un VPC personnalisé (pas d'auto-create-subnetworks) et un subnet dédié au GKE avec Private Google Access activé.
+Crée un VPC personnalisé et un subnet dédié au GKE avec Private Google Access activé.
 
 ```hcl
-google_compute_network.main          # VPC principal
-google_compute_subnetwork.gke        # Subnet 10.0.1.0/24
+google_compute_network.main       # VPC principal
+google_compute_subnetwork.gke     # Subnet 10.0.1.0/24
 ```
 
 #### `modules/artifact_registry/`
 
-Crée un repository Docker dans Google Artifact Registry. L'URL complète de l'image sera :
+Crée un repository Docker dans Google Artifact Registry. L'URL complète de l'image :
 ```
 europe-west1-docker.pkg.dev/<project>/<repo>/<image>:<tag>
 ```
 
+#### `modules/iam/`
+
+Couche d'identité par environnement. Trois responsabilités :
+
+- Crée le Service Account GKE nodes `sa-gke-{env}-pfe`
+- Lui accorde les 5 rôles minimum requis (logging, monitoring, artifactregistry, stackdriver)
+- Accorde à `sa-terraform-ci` le droit `iam.serviceAccountUser` sur ce SA et sur le SA Compute Engine par défaut
+
+```hcl
+# Input  : project_id, environment, terraform_ci_sa_email, developer_group_email (nullable)
+# Output : gke_nodes_sa_email → consommé par modules/gke
+```
+
+La variable `developer_group_email` est optionnelle (`default = null`). Quand elle est renseignée, un groupe Google obtient `container.clusterViewer`. Laisser à `null` en production.
+
 #### `modules/gke/`
 
-- Désactive le node pool par défaut (bonne pratique — géré séparément)
+Reçoit `gke_nodes_sa_email` en input depuis `modules/iam/` — ne crée aucune identité.
+
+- Désactive le node pool par défaut (géré séparément — bonne pratique)
 - Active le mode VPC-native et Workload Identity
 - Crée un node pool avec spot instances (économies de coût en staging)
-- Assigne un SA dédié aux nodes avec le minimum de permissions nécessaires
+- CKV_GCP_13 : auth par certificat client désactivée
+- CKV_GCP_65 : NetworkPolicy Calico activée
+- CKV_GCP_66 : Binary Authorization activée
 
 ---
 
-## Phase B — Bootstrap GitOps (`bootstrap-gitops/`)
+## Bootstrap ArgoCD — job GitHub Actions
 
-Installe ArgoCD sur le cluster existant et crée le root-app ArgoCD (App-of-Apps).
+ArgoCD est installé par le job `bootstrap-argocd` dans `workflow-infra.yml`.
 
-```bash
-cd bootstrap-gitops
+**Déclenchement :**
+- Automatiquement après chaque `apply` réussi
+- Manuellement via `workflow_dispatch` → action `bootstrap`
+- Si l'infra est déjà à jour (plan exitcode=0), le job tourne quand même — le check `already_bootstrapped` le rend rapide (~5s) si ArgoCD est déjà installé
 
-cat > terraform.tfvars <<EOF
-project_id             = "pfe-2026-495220"
-region                 = "europe-west1"
-cluster_name           = "gke-staging-pfe"
-gitops_repo_url        = "https://github.com/mariemmehri/repo-config"
-gitops_target_revision = "main"
-gitops_path            = "apps/children"
-EOF
+**Étapes du job :**
 
-terraform init \
-  -backend-config="bucket=tfstate-pfe-2026" \
-  -backend-config="prefix=bootstrap"
+```
+1. Check already_bootstrapped
+   ├── Si ArgoCD namespace + root-app existent → skip (sauf action=bootstrap)
+   └── Sinon → continuer
 
-terraform apply
+2. helm upgrade --install argocd argo/argo-cd
+   --version 6.7.3 --wait --timeout 600s
+
+3. kubectl wait crd/applications.argoproj.io --timeout=120s
+
+4. kubectl wait pods -l argocd-server --timeout=300s
+
+5. kubectl apply -f repo-config/apps/root-app.yaml
 ```
 
-### Problème CRD et solution deux phases
-
-**Problème :** Créer `kubernetes_manifest` (Application ArgoCD) dans le même apply que `helm_release.argocd` provoque :
-```
-the server could not find the requested resource (argoproj.io/v1alpha1, Application)
-```
-Le CRD `applications.argoproj.io` n'est pas encore enregistré par l'API server au moment où Terraform tente de créer la ressource.
-
-**Solution dans `main.tf` :**
-1. `kubernetes_namespace_v1.argocd` — namespace
-2. `helm_release.argocd` (wait=true, timeout=600s) — installe ArgoCD et attend que les pods soient Running
-3. `kubernetes_manifest.root_app` (depends_on: helm_release) — Application root-app
-
-**Solution dans le workflow GitHub Actions :**
-```bash
-# Étape 1 : appliquer uniquement ArgoCD
-terraform apply -target=helm_release.argocd -auto-approve
-
-# Étape 2 : attendre le CRD (120s max)
-kubectl wait --for=condition=established crd/applications.argoproj.io --timeout=120s
-
-# Étape 3 : attendre le pod ArgoCD server (300s max)
-kubectl wait --for=condition=Ready pods -l app.kubernetes.io/name=argocd-server -n argocd --timeout=300s
-
-# Étape 4 : appliquer le reste (root-app manifest)
-terraform apply -auto-approve
-```
-
-### Root-app créé par Terraform
-
-```yaml
-apiVersion: argoproj.io/v1alpha1
-kind: Application
-metadata:
-  name: root-app
-  namespace: argocd
-spec:
-  source:
-    repoURL: <gitops_repo_url>
-    path: apps/children          # surveille ce dossier
-    targetRevision: main
-  destination:
-    server: https://kubernetes.default.svc
-    namespace: argocd
-  syncPolicy:
-    automated:
-      prune: true
-      selfHeal: true
-```
 
 ---
 
-## Workflows GitHub Actions
+## Workflow GitHub Actions — `workflow-infra.yml`
 
-### `workflow-infra.yml` — Phase A
+**Un seul workflow** gère l'ensemble du cycle de vie : infra Terraform + bootstrap ArgoCD.
 
 **Déclencheurs :**
 - Push sur `main` (paths: `environments/**`, `modules/**`, `backend-config/**`)
 - Pull Request vers `main`
 - Schedule quotidien (13:30 UTC) — drift detection
-- `workflow_dispatch` (plan | apply | destroy-staging | drift)
+- `workflow_dispatch` (plan | apply | destroy-staging | drift | bootstrap | unlock)
 
-**Jobs :**
+### Jobs
 
-| Job | Condition | Description |
-|-----|-----------|-------------|
-| `validate` | Toujours | fmt, validate, tflint, checkov |
-| `plan` | Sauf destroy | `terraform plan -detailed-exitcode` |
-| `apply` | exitcode=2 + push | `terraform apply` + attend readiness GKE |
-| `detect-drift` | Schedule ou dispatch | `terraform plan -refresh-only`, ouvre issue si dérive |
-| `destroy` | dispatch + confirm | Protégé par GitHub Environment `staging-destroy` |
+| Job | Dépendances | Condition | Description |
+|-----|-------------|-----------|-------------|
+| `validate` | — | Toujours | `terraform fmt -check`, `terraform validate` sur tous les modules |
+| `lint` | validate | Toujours | `tflint --recursive` |
+| `plan` | validate, lint | Sauf destroy | `terraform plan -detailed-exitcode`, commentaire PR, upload artifact |
+| `apply` | plan | exitcode=2 + push | `terraform apply` + `kubectl wait nodes` — protégé par env `staging-apply` |
+| `bootstrap-argocd` | plan, apply | Toujours (sauf PR, destroy) | Helm + kubectl ArgoCD install — idempotent |
+| `detect-drift` | — | Schedule ou dispatch drift/plan | `terraform plan -refresh-only`, ouvre issue `terraform-drift` |
+| `destroy` | — | dispatch destroy-staging | Cleanup ArgoCD → `terraform destroy` — protégé par env `staging-destroy` |
+| `unlock` | — | dispatch unlock | Force-unlock état GCS bloqué (escape hatch) |
 
-**Commentaire PR automatique :**
-Quand un plan détecte des changements sur une PR, le workflow commente automatiquement avec un tableau Create/Update/Destroy et le détail des ressources.
+### Détail des jobs clés
 
-**Drift detection :**
+**`plan`**
+- Génère `tfplan.binary` + `tfplan.json`
+- Commente automatiquement les PR avec un tableau Create/Update/Destroy
+- Upload l'artifact plan (retention 1 jour) — `apply` le télécharge plutôt que de re-planifier
+
+**`apply`**
+- Protégé par GitHub Environment `staging-apply` (approbation manuelle recommandée)
+- Télécharge l'artifact plan — garantit que ce qui est appliqué est exactement ce qui a été planifié
+- Attend `kubectl wait nodes --all --timeout=300s` après apply
+
+**`bootstrap-argocd`**
+- Condition `always()` — tourne même si `apply` a été skippé (infra déjà à jour)
+- Check `already_bootstrapped` via `kubectl get namespace argocd` — évite une réinstallation sur chaque push
+- `action=bootstrap` force la réinstallation même si ArgoCD est présent
+
+**`destroy`**
+- Supprime d'abord le finalizer du `root-app` ArgoCD (évite le blocage cascade-delete)
+- Uninstall ArgoCD via Helm
+- Puis `terraform destroy`
+- Protégé par GitHub Environment `staging-destroy`
+
+**`unlock`**
+- Lit le lock ID depuis GCS et appelle `terraform force-unlock`
+- Escape hatch pour les locks orphelins après un apply annulé ou timeout
+
+### Drift detection
+
 ```bash
 terraform plan -refresh-only -detailed-exitcode
-# exitcode=2 → crée une GitHub Issue avec label "terraform-drift"
+# exitcode=2 → ouvre une GitHub Issue avec label "terraform-drift"
 # Ne crée pas de doublon si une issue ouverte existe déjà
 ```
-
-### `workflow-gitops-bootstrap.yml` — Phase B
-
-**Déclencheurs :**
-- Push sur `bootstrap-gitops/**`
-- `workflow_run` après succès du workflow infra (chaînage automatique)
-- `workflow_dispatch` (plan | apply | destroy)
-
-**Job `check-trigger` :** vérifie que si le déclencheur est `workflow_run`, le workflow infra s'est terminé avec succès (`conclusion=success`). Évite de bootstrapper ArgoCD si l'infra a échoué.
-
-**Job `destroy` :** supprime uniquement l'objet `root-app` ArgoCD. Ne touche pas au cluster GKE ni à ArgoCD lui-même. Protégé par GitHub Environment `gitops-destroy`.
 
 ---
 
@@ -292,13 +263,13 @@ GitHub Actions Runner
 google-github-actions/auth@v2
        │  échange le token OIDC contre un token GCP (STS)
        ▼
-GCP IAM (Service Account impersonation)
+GCP IAM (impersonation du SA)
        │  accès aux APIs GCP selon les rôles du SA
        ▼
-terraform apply / docker push / kubectl
+terraform apply / docker push / helm install / kubectl
 ```
 
-Le trust entre GitHub et GCP est établi via :
+Le trust est établi via :
 - `attribute_condition = "assertion.repository_owner == '<owner>'"` — limite aux repos du bon owner
 - Binding par repo (`attribute.repository/<owner>/<repo>`) — chaque SA est lié à un seul repo
 
@@ -306,17 +277,18 @@ Le trust entre GitHub et GCP est établi via :
 
 ## Variables GitHub Actions requises
 
-| Variable | Description |
-|----------|-------------|
-| `GCP_PROJECT_ID` | ID du projet GCP |
+### Repo `repo-infrastructure`
+
+| Variable | Valeur |
+|----------|--------|
+| `GCP_PROJECT_ID` | `pfe-2026-495220` |
 | `GCP_REGION` | `europe-west1` |
-| `GKE_CLUSTER_NAME` | Nom du cluster |
-| `GAR_REPOSITORY_NAME` | Nom du repo Artifact Registry |
-| `GCS_BUCKET_NAME` | Nom du bucket state |
-| `NODE_COUNT` | Nombre de nodes (1) |
+| `GKE_CLUSTER_NAME` | `gke-staging-pfe` |
+| `GAR_REPOSITORY_NAME` | `registry-staging-pfe` |
+| `GCS_BUCKET_NAME` | `tfstate-pfe-2026` |
+| `NODE_COUNT` | `1` |
 | `NODE_VM_SIZE` | `e2-standard-2` |
-| `GITOPS_REPO_URL` | URL HTTPS du repo-config |
-| `GITOPS_PATH` | `apps/children` |
+| `GITOPS_REPO` | `mariemmehri/todo-config` |
 
 | Secret | Description |
 |--------|-------------|
@@ -332,7 +304,9 @@ Le trust entre GitHub et GCP est établi via :
 terraform fmt -recursive
 
 # Validation syntaxique
-for d in backend-config environments/staging modules/gke modules/networking modules/artifact_registry; do
+for d in backend-config environments/staging \
+          modules/gke modules/networking \
+          modules/artifact_registry modules/iam; do
   echo "── $d"
   (cd "$d" && terraform init -backend=false && terraform validate)
 done
@@ -341,22 +315,26 @@ done
 tflint --recursive --config=.tflint.hcl
 
 # Checkov (sécurité)
-checkov -d . --framework terraform --skip-check CKV_GCP_25,CKV_GCP_71
+checkov -d . --framework terraform --config-file .checkov.yaml
 ```
 
 ---
 
-## Outputs utiles (après Phase A)
+## Commandes utiles après apply
 
 ```bash
 # Se connecter au cluster
-gcloud container clusters get-credentials gke-staging-pfe --region europe-west1-b --project pfe-2026-495220
+gcloud container clusters get-credentials gke-staging-pfe \
+  --region europe-west1-b --project pfe-2026-495220
 
-# Port-forward ArgoCD (après Phase B)
+# Port-forward ArgoCD
 kubectl port-forward svc/argocd-server -n argocd 9089:80
 # Interface : http://localhost:9089
 
 # Mot de passe admin ArgoCD
 kubectl get secret argocd-initial-admin-secret -n argocd \
   -o jsonpath='{.data.password}' | base64 -d
+
+# Vérifier les applications ArgoCD
+kubectl get applications -n argocd
 ```
