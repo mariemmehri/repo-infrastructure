@@ -31,8 +31,21 @@ resource "google_project_iam_member" "gke_node_roles" {
   member   = "serviceAccount:${google_service_account.gke_nodes.email}"
 }
 
+data "google_project" "current" {
+  project_id = var.project_id
+}
+
+# Allows Terraform CI to assign sa-gke-{env}-pfe to node pool during apply
 resource "google_service_account_iam_member" "terraform_ci_uses_gke_sa" {
   service_account_id = google_service_account.gke_nodes.name
+  role               = "roles/iam.serviceAccountUser"
+  member             = "serviceAccount:${var.terraform_ci_sa_email}"
+}
+
+# GKE cluster bootstrap internally references the Compute Engine default SA
+# even when remove_default_node_pool = true — Terraform CI must be allowed to use it
+resource "google_service_account_iam_member" "terraform_ci_uses_compute_default_sa" {
+  service_account_id = "projects/${var.project_id}/serviceAccounts/${data.google_project.current.number}-compute@developer.gserviceaccount.com"
   role               = "roles/iam.serviceAccountUser"
   member             = "serviceAccount:${var.terraform_ci_sa_email}"
 }
