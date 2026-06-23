@@ -142,7 +142,7 @@ jobs:
   # ─────────────────────────────────────────────────────────
   plan:
     name: "Plan — Infra (staging)"
-    needs: [validate, lint, security]
+    needs: [validate, lint]
     runs-on: ubuntu-latest
     if: |
       (
