@@ -104,45 +104,45 @@ jobs:
   #   sarif    → Code Scanning tab (persistent, inline PR annotations)
   #   artifact → downloadable (30-day retention)
   # ─────────────────────────────────────────────────────────
-  # security:
-  #   name: "Security (checkov)"
-  #   needs: validate
-  #   runs-on: ubuntu-latest
-  #   permissions:
-  #     contents: read
-  #     security-events: write
+  security:
+    name: "Security (checkov)"
+    needs: validate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
 
-  #   steps:
-  #     - uses: actions/checkout@v4
+    steps:
+      - uses: actions/checkout@v4
 
-  #     - name: Run Checkov
-  #       uses: bridgecrewio/checkov-action@v12.2847.0
-  #       with:
-  #         config_file: .checkov.yaml
-  #         output_format: cli,sarif
-  #         output_file_path: console,results.sarif
+      - name: Run Checkov
+        uses: bridgecrewio/checkov-action@v12.2847.0
+        with:
+          config_file: .checkov.yaml
+          output_format: cli,sarif
+          output_file_path: console,results.sarif
 
-  #     - name: Upload SARIF to GitHub Code Scanning
-  #       uses: github/codeql-action/upload-sarif@v3
-  #       if: always()
-  #       with:
-  #         sarif_file: results.sarif
-  #         category: checkov-terraform
+      - name: Upload SARIF to GitHub Code Scanning
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: results.sarif
+          category: checkov-terraform
 
-  #     - name: Upload scan artifact
-  #       uses: actions/upload-artifact@v4
-  #       if: always()
-  #       with:
-  #         name: checkov-scan-${{ github.run_number }}
-  #         path: results.sarif
-  #         retention-days: 30
+      - name: Upload scan artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: checkov-scan-${{ github.run_number }}
+          path: results.sarif
+          retention-days: 30
 
   # ─────────────────────────────────────────────────────────
   # JOB 2 — PLAN PHASE A
   # ─────────────────────────────────────────────────────────
   plan:
     name: "Plan — Infra (staging)"
-    needs: [validate, lint]
+    needs: [validate, lint, security]
     runs-on: ubuntu-latest
     if: |
       (
