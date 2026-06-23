@@ -91,11 +91,7 @@ resource "google_container_node_pool" "default" {
   location       = "${var.region}-b"
   node_locations = ["${var.region}-b"]
   project        = var.project_id
-  node_count     = var.node_count
-  autoscaling {
-    min_node_count = 1
-    max_node_count = 3
-  }
+  node_count = var.node_count
   management {
     auto_upgrade = true
     auto_repair  = true
