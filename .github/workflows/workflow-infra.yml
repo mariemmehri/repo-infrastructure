@@ -68,7 +68,7 @@ jobs:
         run: |
           for d in backend-config environments/staging \
                    modules/gke modules/networking \
-                   modules/artifact_registry; do
+                   modules/artifact_registry modules/iam; do
             [ -d "$d" ] || continue
             echo "── Validating: $d"
             (cd "$d" && \
@@ -104,47 +104,45 @@ jobs:
   #   sarif    → Code Scanning tab (persistent, inline PR annotations)
   #   artifact → downloadable (30-day retention)
   # ─────────────────────────────────────────────────────────
-  # security:
-  #   name: "Security (checkov)"
-  #   needs: validate
-  #   runs-on: ubuntu-latest
-  #   permissions:
-  #     contents: read
-  #     security-events: write  # required for SARIF upload to Code Scanning
+  security:
+    name: "Security (checkov)"
+    needs: validate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
 
-  #   steps:
-  #     - uses: actions/checkout@v4
+    steps:
+      - uses: actions/checkout@v4
 
-  #     - name: Run Checkov
-  #       uses: bridgecrewio/checkov-action@v12.2847.0
-  #       with:
-  #         config_file: .checkov.yaml
-  #         output_format: cli,sarif
-  #         output_file_path: console,results.sarif
+      - name: Run Checkov
+        uses: bridgecrewio/checkov-action@v12.2847.0
+        with:
+          config_file: .checkov.yaml
+          output_format: cli,sarif
+          output_file_path: console,results.sarif
 
-  #     # Layer 1 — GitHub Code Scanning (Security tab + inline PR annotations)
-  #     - name: Upload SARIF to GitHub Code Scanning
-  #       uses: github/codeql-action/upload-sarif@v3
-  #       if
-  #       with:
-  #         sarif_file: results.sarif
-  #         category: checkov-terraform
+      - name: Upload SARIF to GitHub Code Scanning
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: results.sarif
+          category: checkov-terraform
 
-  #     # Layer 3 — Downloadable artifact (30-day retention)
-  #     - name: Upload scan artifact
-  #       uses: actions/upload-artifact@v4
-        # if
-  #       with:
-  #         name: checkov-scan-{{ github.run_number }}
-  #         path: results.sarif
-  #         retention-days: 30
+      - name: Upload scan artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: checkov-scan-${{ github.run_number }}
+          path: results.sarif
+          retention-days: 30
 
   # ─────────────────────────────────────────────────────────
   # JOB 2 — PLAN PHASE A
   # ─────────────────────────────────────────────────────────
   plan:
     name: "Plan — Infra (staging)"
-    needs: [validate, lint]
+    needs: [validate, lint, security]
     runs-on: ubuntu-latest
     if: |
       (
@@ -399,6 +397,7 @@ jobs:
     name: "Bootstrap ArgoCD"
     needs: [plan, apply]
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     # always() nécessaire pour tourner même quand apply est skipped.
     # apply est skipped quand plan exitcode=0 (infra déjà à jour).
     # Le check interne "already_bootstrapped" rend le job rapide (~5s)
@@ -505,8 +504,6 @@ jobs:
     if: |
       github.event_name == 'schedule' ||
       (github.event_name == 'workflow_dispatch' &&
-       inputs.action == 'plan')||
-       (github.event_name == 'workflow_dispatch' &&
        inputs.action == 'drift')
 
     defaults:
