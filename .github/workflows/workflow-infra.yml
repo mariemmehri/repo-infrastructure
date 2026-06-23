@@ -474,15 +474,17 @@ jobs:
           echo "ArgoCD server ready"
 
       - name: Checkout todo-config
-        if: steps.check.outputs.already_bootstrapped == 'false'
         uses: actions/checkout@v4
         with:
           repository: ${{ vars.GITOPS_REPO }}
           path: repo-config
 
       - name: Apply root-app
-        if: steps.check.outputs.already_bootstrapped == 'false'
-        run: kubectl apply -f repo-config/apps/root-app.yaml
+        run: |
+          kubectl wait --for=condition=established \
+            crd/applications.argoproj.io \
+            --timeout=120s
+          kubectl apply -f repo-config/apps/root-app.yaml
 
       - name: Verify ArgoCD and root-app
         run: |
@@ -653,27 +655,34 @@ jobs:
 
       - name: Graceful ArgoCD cleanup before cluster destruction
         run: |
-          if kubectl get application root-app -n argocd &>/dev/null; then
-            # Strip the cascade-delete finalizer before deleting.
-            # The finalizer blocks deletion until ArgoCD removes every child
-            # resource — which can take minutes. Since we are destroying the
-            # entire cluster, GCP will clean everything up; no cascade needed.
-            echo "Removing finalizer from root-app..."
-            kubectl patch application root-app -n argocd \
-              -p '{"metadata":{"finalizers":null}}' \
-              --type=merge
-            kubectl delete application root-app -n argocd --timeout=30s --ignore-not-found
-            echo "root-app deleted"
-          else
-            echo "root-app not found — skipping"
+          if kubectl get namespace argocd &>/dev/null; then
+            # Remove finalizers from ALL Application objects so the namespace
+            # is not blocked waiting for a controller that is about to be deleted.
+            echo "Removing finalizers from all ArgoCD Applications..."
+            kubectl get applications -n argocd --no-headers 2>/dev/null \
+              | awk '{print $1}' \
+              | xargs -r -I{} kubectl patch application {} -n argocd \
+                  -p '{"metadata":{"finalizers":null}}' --type=merge 2>/dev/null || true
+
+            kubectl delete applications --all -n argocd --timeout=30s --ignore-not-found || true
+            echo "Applications deleted"
           fi
 
           if helm status argocd -n argocd &>/dev/null; then
             echo "Uninstalling ArgoCD..."
-            helm uninstall argocd -n argocd --timeout 120s
-            kubectl delete namespace argocd --timeout=60s --ignore-not-found
+            helm uninstall argocd -n argocd --timeout 120s || true
             echo "ArgoCD uninstalled"
           fi
+
+          # Force-remove CRDs so the namespace is not stuck on finalizers
+          kubectl delete crd \
+            applications.argoproj.io \
+            applicationsets.argoproj.io \
+            appprojects.argoproj.io \
+            --ignore-not-found 2>/dev/null || true
+
+          kubectl delete namespace argocd --timeout=60s --ignore-not-found || true
+          echo "Cleanup complete"
 
       - name: Terraform Destroy
         working-directory: ${{ env.TF_STAGING_DIR }}
