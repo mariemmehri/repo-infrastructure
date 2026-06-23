@@ -26,6 +26,8 @@ resource "google_container_cluster" "gke" {
   # On crée le nôtre juste en dessous
   remove_default_node_pool = true
   initial_node_count       = 1
+  enable_intranode_visibility = true
+
 
   node_config {
     workload_metadata_config {
@@ -93,6 +95,10 @@ resource "google_container_node_pool" "default" {
   autoscaling {
     min_node_count = 1
     max_node_count = 3
+  }
+  management {
+  auto_upgrade = true
+  auto_repair  = true
   }
 
   node_config {
