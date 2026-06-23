@@ -97,8 +97,8 @@ resource "google_container_node_pool" "default" {
     max_node_count = 3
   }
   management {
-  auto_upgrade = true
-  auto_repair  = true
+    auto_upgrade = true
+    auto_repair  = true
   }
 
   node_config {
