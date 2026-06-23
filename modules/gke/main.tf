@@ -112,10 +112,10 @@ resource "google_container_node_pool" "default" {
       "https://www.googleapis.com/auth/cloud-platform"
     ]
 
-    # labels = {
-    #   environment = var.environment
-    #   managed-by  = "terraform"
-    # }
+    labels = {
+      environment = var.environment
+      managed-by  = "terraform"
+    }
 
     # CKV_GCP_68/69/70 — shielded nodes: secure boot + integrity monitoring
     shielded_instance_config {

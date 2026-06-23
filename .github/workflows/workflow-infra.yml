@@ -15,6 +15,9 @@ on:
     paths:
       - "environments/**"
       - "modules/**"
+      - "backend-config/**"
+      - ".github/workflows/workflow-infra.yml"
+      - ".checkov.yaml"
 
   schedule:
     - cron: "30 13 * * *"
