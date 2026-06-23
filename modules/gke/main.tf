@@ -24,8 +24,8 @@ resource "google_container_cluster" "gke" {
 
   # Supprime le node pool default imposé par GCP
   # On crée le nôtre juste en dessous
-  remove_default_node_pool = true
-  initial_node_count       = 1
+  remove_default_node_pool    = true
+  initial_node_count          = 1
   enable_intranode_visibility = true
 
 
