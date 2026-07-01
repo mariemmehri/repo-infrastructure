@@ -101,7 +101,7 @@ resource "google_container_node_pool" "default" {
     machine_type    = var.node_vm_size
     disk_size_gb    = var.disk_size_gb
     service_account = var.gke_nodes_sa_email
-    spot            = true
+    spot            = false
 
 
     oauth_scopes = [
