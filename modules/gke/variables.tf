@@ -19,6 +19,12 @@ variable "node_count" {
   default = 1
 }
 
+variable "max_node_count" {
+  description = "Nombre max de nodes GKE (borne haute de l'autoscaling)"
+  type        = number
+  default     = 3
+}
+
 variable "node_vm_size" {
   description = "Machine type GCP (ex: e2-standard-2)"
   type        = string

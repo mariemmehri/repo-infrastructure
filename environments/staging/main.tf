@@ -28,6 +28,7 @@ module "gke" {
   region             = var.region
   environment        = "staging"
   node_count         = var.node_count
+  max_node_count     = var.max_node_count
   node_vm_size       = var.node_vm_size
   disk_size_gb       = var.disk_size_gb
   release_channel    = var.release_channel

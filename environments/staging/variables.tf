@@ -15,9 +15,15 @@ variable "cluster_name" {
 }
 
 variable "node_count" {
-  description = "Nombre de nodes GKE"
+  description = "Nombre de nodes GKE (borne basse de l'autoscaling)"
   type        = number
   default     = 1
+}
+
+variable "max_node_count" {
+  description = "Nombre max de nodes GKE (borne haute de l'autoscaling)"
+  type        = number
+  default     = 3
 }
 
 variable "node_vm_size" {

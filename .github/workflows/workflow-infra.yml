@@ -189,8 +189,9 @@ jobs:
           cluster_name  = "${{ vars.GKE_CLUSTER_NAME }}"
           registry_name = "${{ vars.GAR_REPOSITORY_NAME }}"
           region        = "${{ vars.GCP_REGION }}"
-          node_count    = ${{ vars.NODE_COUNT }}
-          node_vm_size  = "${{ vars.NODE_VM_SIZE }}"
+          node_count     = ${{ vars.NODE_COUNT }}
+          max_node_count = ${{ vars.MAX_NODE_COUNT }}
+          node_vm_size   = "${{ vars.NODE_VM_SIZE }}"
           EOF
 
       - name: Terraform Init
@@ -540,8 +541,9 @@ jobs:
           cluster_name  = "${{ vars.GKE_CLUSTER_NAME }}"
           registry_name = "${{ vars.GAR_REPOSITORY_NAME }}"
           region        = "${{ vars.GCP_REGION }}"
-          node_count    = ${{ vars.NODE_COUNT }}
-          node_vm_size  = "${{ vars.NODE_VM_SIZE }}"
+          node_count     = ${{ vars.NODE_COUNT }}
+          max_node_count = ${{ vars.MAX_NODE_COUNT }}
+          node_vm_size   = "${{ vars.NODE_VM_SIZE }}"
           EOF
 
       - name: Terraform Init
@@ -642,8 +644,9 @@ jobs:
           cluster_name  = "${{ vars.GKE_CLUSTER_NAME }}"
           registry_name = "${{ vars.GAR_REPOSITORY_NAME }}"
           region        = "${{ vars.GCP_REGION }}"
-          node_count    = ${{ vars.NODE_COUNT }}
-          node_vm_size  = "${{ vars.NODE_VM_SIZE }}"
+          node_count     = ${{ vars.NODE_COUNT }}
+          max_node_count = ${{ vars.MAX_NODE_COUNT }}
+          node_vm_size   = "${{ vars.NODE_VM_SIZE }}"
           EOF
       - name: Terraform Init
         working-directory: ${{ env.TF_STAGING_DIR }}
