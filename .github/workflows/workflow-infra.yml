@@ -386,6 +386,26 @@ jobs:
 
       - name: Wait for GKE to be fully ready
         run: |
+          # `kubectl wait --all` errors with "no matching resources found"
+          # if zero node objects exist yet. With spot VMs + autoscaling the
+          # node pool can exist before any node has registered with the API
+          # server, so first poll until at least one node appears.
+          echo "Waiting for at least one node to register..."
+          for i in $(seq 1 30); do
+            if [ "$(kubectl get nodes --no-headers 2>/dev/null | wc -l)" -gt 0 ]; then
+              echo "Node(s) registered:"
+              kubectl get nodes
+              break
+            fi
+            echo "  no nodes yet (attempt $i/30) — retrying in 10s"
+            sleep 10
+          done
+
+          if [ "$(kubectl get nodes --no-headers 2>/dev/null | wc -l)" -eq 0 ]; then
+            echo "::error::No GKE nodes registered after 5 minutes"
+            exit 1
+          fi
+
           kubectl wait --for=condition=Ready nodes \
             --all \
             --timeout=300s
