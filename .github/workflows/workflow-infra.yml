@@ -494,7 +494,7 @@ jobs:
             --timeout=300s
           echo "ArgoCD server ready"
 
-      - name: Checkout todo-config
+      - name: Checkout repo-config
         uses: actions/checkout@v4
         with:
           repository: ${{ vars.GITOPS_REPO }}

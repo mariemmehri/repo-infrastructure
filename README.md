@@ -1,6 +1,6 @@
 # repo-infrastructure — Infrastructure as Code GCP
 
-Infrastructure complète Google Cloud Platform pour l'environnement staging de la plateforme Todo GitOps.  
+Infrastructure complète Google Cloud Platform pour l'environnement staging de la plateforme GitOps HR Portal (SIRH).  
 Terraform 1.7.5 — Backend GCS — Workload Identity Federation — ArgoCD bootstrappé via GitHub Actions.
 
 ---
@@ -288,7 +288,7 @@ Le trust est établi via :
 | `GCS_BUCKET_NAME` | `tfstate-pfe-2026` |
 | `NODE_COUNT` | `1` |
 | `NODE_VM_SIZE` | `e2-standard-2` |
-| `GITOPS_REPO` | `mariemmehri/todo-config` |
+| `GITOPS_REPO` | `mariemmehri/repo-config` |
 
 | Secret | Description |
 |--------|-------------|
