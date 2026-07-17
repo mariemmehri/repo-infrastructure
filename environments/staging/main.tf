@@ -13,6 +13,16 @@ module "artifact_registry" {
   environment = "staging"
 }
 
+# Registre isolé pour la prod — seules les images promues par tag (promote-prod.yml)
+# y sont copiées; le CI develop/main ne pousse jamais ici.
+module "artifact_registry_prod" {
+  source      = "../../modules/artifact_registry"
+  acr_name    = var.prod_registry_name
+  project_id  = var.project_id
+  region      = var.region
+  environment = "prod"
+}
+
 module "iam" {
   source                = "../../modules/iam"
   project_id            = var.project_id

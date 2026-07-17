@@ -6,6 +6,10 @@ output "registry_login_server" {
   value = module.artifact_registry.acr_login_server
 }
 
+output "prod_registry_login_server" {
+  value = module.artifact_registry_prod.acr_login_server
+}
+
 output "kubectl_command" {
   value = "gcloud container clusters get-credentials ${var.cluster_name} --region ${var.region} --project ${var.project_id}"
 }

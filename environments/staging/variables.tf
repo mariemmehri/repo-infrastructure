@@ -49,6 +49,12 @@ variable "registry_name" {
   type        = string
 }
 
+variable "prod_registry_name" {
+  description = "Nom du repository Artifact Registry isolé pour la prod (images promues par tag uniquement)"
+  type        = string
+  default     = "registry-prod-pfe"
+}
+
 variable "developer_group_email" {
   description = "Google group email for developer kubectl read access (staging only, null disables)"
   type        = string
