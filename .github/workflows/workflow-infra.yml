@@ -26,12 +26,12 @@ on:
     inputs:
       action:
         # description: "plan | apply | destroy-staging | drift | bootstrap | unlock"
-        description: "plan | apply | destroy-staging  | bootstrap | unlock"
+        description: "plan | apply | destroy-staging  | bootstrap "
         required: true
         default: "plan"
         type: choice
         # options: [plan, apply, destroy-staging, drift, bootstrap, unlock]
-        options: [plan, apply, destroy-staging, bootstrap, unlock]
+        options: [plan, apply, destroy-staging, bootstrap]
 
 concurrency:
   group: terraform-infra-${{ github.ref }}
