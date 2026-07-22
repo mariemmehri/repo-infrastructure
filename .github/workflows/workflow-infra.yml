@@ -614,51 +614,51 @@ jobs:
   # Trigger: workflow_dispatch → action = unlock
   # Use when a cancelled/timed-out apply leaves a stale lock.
   # ─────────────────────────────────────────────────────────
-  unlock:
-    name: "Force-unlock Terraform state"
-    runs-on: ubuntu-latest
-    if: |
-      github.event_name == 'workflow_dispatch' &&
-      inputs.action == 'unlock'
+  # unlock:
+  #   name: "Force-unlock Terraform state"
+  #   runs-on: ubuntu-latest
+  #   if |
+  #     github.event_name == 'workflow_dispatch' &&
+  #     inputs.action == 'unlock'
 
-    defaults:
-      run:
-        working-directory: ${{ env.TF_STAGING_DIR }}
+  #   defaults:
+  #     run:
+  #       working-directory: {{ env.TF_STAGING_DIR }}
 
-    steps:
-      - uses: actions/checkout@v4
+  #   steps:
+  #     - uses: actions/checkout@v4
 
-      - uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: ${{ env.TF_VERSION }}
-          terraform_wrapper: false
+  #     - uses: hashicorp/setup-terraform@v3
+  #       with:
+  #         terraform_version: {{ env.TF_VERSION }}
+  #         terraform_wrapper: false
 
-      - name: Authenticate to GCP
-        uses: google-github-actions/auth@v2
-        with:
-          workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ secrets.SERVICE_ACCOUNT_EMAIL }}
+  #     - name: Authenticate to GCP
+  #       uses: google-github-actions/auth@v2
+  #       with:
+  #         workload_identity_provider: {{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
+  #         service_account: {{ secrets.SERVICE_ACCOUNT_EMAIL }}
 
-      - uses: google-github-actions/setup-gcloud@v2
-        with:
-          project_id: ${{ vars.GCP_PROJECT_ID }}
+  #     - uses: google-github-actions/setup-gcloud@v2
+  #       with:
+  #         project_id: {{ vars.GCP_PROJECT_ID }}
 
-      - name: Terraform Init
-        run: |
-          terraform init \
-            -backend-config="bucket=${{ vars.GCS_BUCKET_NAME }}" \
-            -backend-config="prefix=staging" \
-            -reconfigure -input=false -no-color
+  #     - name: Terraform Init
+  #       run: |
+  #         terraform init \
+  #           -backend-config="bucket={{ vars.GCS_BUCKET_NAME }}" \
+  #           -backend-config="prefix=staging" \
+  #           -reconfigure -input=false -no-color
 
-      - name: Release stale lock
-        run: |
-          LOCK_ID=$(gsutil cat gs://${{ vars.GCS_BUCKET_NAME }}/staging/default.tflock \
-            2>/dev/null | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['ID'])" \
-            2>/dev/null || echo "")
-          if [ -n "$LOCK_ID" ]; then
-            echo "Releasing lock: $LOCK_ID"
-            terraform force-unlock -force "$LOCK_ID"
-            echo "Lock released — you can now re-run plan/apply."
-          else
-            echo "No stale lock found — state is clean."
-          fi
+  #     - name: Release stale lock
+  #       run: |
+  #         LOCK_ID=$(gsutil cat gs://{{ vars.GCS_BUCKET_NAME }}/staging/default.tflock \
+  #           2>/dev/null | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['ID'])" \
+  #           2>/dev/null || echo "")
+  #         if [ -n "$LOCK_ID" ]; then
+  #           echo "Releasing lock: $LOCK_ID"
+  #           terraform force-unlock -force "$LOCK_ID"
+  #           echo "Lock released — you can now re-run plan/apply."
+  #         else
+  #           echo "No stale lock found — state is clean."
+  #         fi
