@@ -25,11 +25,13 @@ on:
   workflow_dispatch:
     inputs:
       action:
-        description: "plan | apply | destroy-staging | drift | bootstrap | unlock"
+        # description: "plan | apply | destroy-staging | drift | bootstrap | unlock"
+        description: "plan | apply | destroy-staging  | bootstrap | unlock"
         required: true
         default: "plan"
         type: choice
-        options: [plan, apply, destroy-staging, drift, bootstrap, unlock]
+        # options: [plan, apply, destroy-staging, drift, bootstrap, unlock]
+        options: [plan, apply, destroy-staging, bootstrap, unlock]
 
 concurrency:
   group: terraform-infra-${{ github.ref }}
@@ -521,111 +523,7 @@ jobs:
           kubectl get application root-app -n argocd \
             -o jsonpath='SyncStatus: {.status.sync.status}{"\n"}Health: {.status.health.status}{"\n"}'
 
-  # ─────────────────────────────────────────────────────────
-  # JOB 4 — DRIFT DETECTION
-  # ─────────────────────────────────────────────────────────
-  detect-drift:
-    name: "Detect infrastructure drift"
-    runs-on: ubuntu-latest
-    if: |
-      github.event_name == 'schedule' ||
-      (github.event_name == 'workflow_dispatch' &&
-       inputs.action == 'drift')
-
-    defaults:
-      run:
-        working-directory: ${{ env.TF_STAGING_DIR }}
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: ${{ env.TF_VERSION }}
-          terraform_wrapper: false
-
-      - name: Authenticate to GCP
-        uses: google-github-actions/auth@v2
-        with:
-          workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ secrets.SERVICE_ACCOUNT_EMAIL }}
-
-      - uses: google-github-actions/setup-gcloud@v2
-        with:
-          project_id: ${{ vars.GCP_PROJECT_ID }}
-
-      - name: Write terraform.tfvars
-        run: |
-          cat > terraform.tfvars <<EOF
-          project_id    = "${{ vars.GCP_PROJECT_ID }}"
-          cluster_name  = "${{ vars.GKE_CLUSTER_NAME }}"
-          registry_name = "${{ vars.GAR_REPOSITORY_NAME }}"
-          region        = "${{ vars.GCP_REGION }}"
-          node_count     = ${{ vars.NODE_COUNT }}
-          max_node_count = ${{ vars.MAX_NODE_COUNT }}
-          node_vm_size   = "${{ vars.NODE_VM_SIZE }}"
-          EOF
-
-      - name: Terraform Init
-        run: |
-          terraform init \
-            -backend-config="bucket=${{ vars.GCS_BUCKET_NAME }}" \
-            -backend-config="prefix=staging" \
-            -reconfigure -input=false -no-color
-
-      - name: Detect drift
-        id: drift
-        shell: bash
-        run: |
-          set +e
-
-          terraform plan \
-            -refresh-only \
-            -detailed-exitcode \
-            -no-color \
-            -out=drift.binary 2>&1 | tee drift.log
-
-          EXIT=$?
-          echo "drift_exitcode=${EXIT}" >> "$GITHUB_OUTPUT"
-
-          case "${EXIT}" in
-            0) echo "Infrastructure in sync." ;;
-            1) echo " Error during refresh." ;;
-            2) echo " DRIFT DETECTED." ;;
-          esac
-
-          if [ "${EXIT}" -eq 1 ]; then exit 1; fi
-          exit 0
-
-      - name: Open drift issue
-        if: steps.drift.outputs.drift_exitcode == '2'
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const fs = require('fs');
-            const log = fs.existsSync('${{ env.TF_STAGING_DIR }}/drift.log')
-              ? fs.readFileSync('${{ env.TF_STAGING_DIR }}/drift.log', 'utf8').slice(0, 3000)
-              : 'Log not available.';
-
-            const existing = await github.rest.issues.listForRepo({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              labels: 'terraform-drift',
-              state: 'open'
-            });
-
-            if (existing.data.length > 0) {
-              console.log('Drift issue already open — skipping.');
-              return;
-            }
-
-            await github.rest.issues.create({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              title: `[Drift] GCP infra differs from tfstate — ${new Date().toISOString().slice(0,10)}`,
-              labels: ['terraform-drift'],
-              body: `## Infrastructure drift detected\n\n<details><summary>Log</summary>\n\n\`\`\`\n${log}\n\`\`\`\n</details>`
-            });
+  
 
   # ─────────────────────────────────────────────────────────
   # JOB 5 — DESTROY
