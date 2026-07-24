@@ -8,3 +8,6 @@ node_vm_size  = "e2-small"
 disk_size_gb  = 30
 release_channel = "REGULAR"
 registry_name = "registry-staging-pfe"
+
+# CNPG backup destination (must be a globally-unique GCS bucket name)
+cnpg_backup_bucket_name = "cnpg-backup-staging-pfe-***-**"

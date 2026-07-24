@@ -33,3 +33,4 @@ skip-check:
   - CKV_GCP_84   # SKIP staging — CSEK on Artifact Registry not required; Google-managed encryption sufficient
   - CKV_GCP_65   # SKIP staging — RBAC with Google Groups requires Cloud Identity setup outside PFE scope
   - CKV_GCP_62   # SKIP — tfstate bucket logs to tfstate_logs; tfstate_logs itself cannot log without circular dependency
+  - CKV_GCP_78   # SKIP — cnpg_backup bucket: barman-cloud manages its own backup retention; GCS versioning would fight Barman's own object lifecycle

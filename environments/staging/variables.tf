@@ -60,3 +60,20 @@ variable "developer_group_email" {
   type        = string
   default     = null
 }
+
+variable "cnpg_backup_bucket_name" {
+  description = "Globally-unique GCS bucket name for CNPG's barman-cloud WAL/base backups"
+  type        = string
+}
+
+variable "cnpg_ksa_namespace" {
+  description = "Namespace of the Postgres Cluster's ServiceAccount (co-located with repo-app in the staging namespace, not cnpg-system — that's only the operator's namespace)"
+  type        = string
+  default     = "staging"
+}
+
+variable "cnpg_ksa_name" {
+  description = "Name of the ServiceAccount CNPG auto-generates for the Cluster (matches the Cluster's fullnameOverride in repo-config's cnpg-cluster-staging.yaml — must stay in sync)"
+  type        = string
+  default     = "pg-staging"
+}

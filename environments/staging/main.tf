@@ -47,3 +47,16 @@ module "gke" {
   gke_nodes_sa_email = module.iam.gke_nodes_sa_email
   depends_on         = [module.networking, module.iam]
 }
+
+# Backup destination for CNPG's barman-cloud CNPG-I plugin — additive only,
+# no other module depends on it. See repo-config for the operator/Cluster/
+# plugin wiring that actually consumes this bucket + GSA.
+module "cnpg_backup" {
+  source             = "../../modules/cnpg_backup"
+  project_id         = var.project_id
+  environment        = "staging"
+  region             = var.region
+  backup_bucket_name = var.cnpg_backup_bucket_name
+  ksa_namespace      = var.cnpg_ksa_namespace
+  ksa_name           = var.cnpg_ksa_name
+}

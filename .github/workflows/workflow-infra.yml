@@ -73,7 +73,8 @@ jobs:
         run: |
           for d in backend-config environments/staging \
                    modules/gke modules/networking \
-                   modules/artifact_registry modules/iam; do
+                   modules/artifact_registry modules/iam \
+                   modules/cnpg_backup; do
             [ -d "$d" ] || continue
             echo "── Validating: $d"
             (cd "$d" && \
@@ -194,6 +195,7 @@ jobs:
           node_count     = ${{ vars.NODE_COUNT }}
           max_node_count = ${{ vars.MAX_NODE_COUNT }}
           node_vm_size   = "${{ vars.NODE_VM_SIZE }}"
+          cnpg_backup_bucket_name = "${{ vars.CNPG_BACKUP_BUCKET_NAME }}"
           EOF
 
       - name: Terraform Init
@@ -565,6 +567,7 @@ jobs:
           node_count     = ${{ vars.NODE_COUNT }}
           max_node_count = ${{ vars.MAX_NODE_COUNT }}
           node_vm_size   = "${{ vars.NODE_VM_SIZE }}"
+          cnpg_backup_bucket_name = "${{ vars.CNPG_BACKUP_BUCKET_NAME }}"
           EOF
       - name: Terraform Init
         working-directory: ${{ env.TF_STAGING_DIR }}

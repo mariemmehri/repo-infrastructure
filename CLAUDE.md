@@ -25,16 +25,16 @@ repo-infrastructure/
 │   ├── outputs.tf                # values to paste into GitHub secrets/vars
 │   └── terraform.tfvars.example
 ├── environments/staging/        # Only active Terraform root
-│   ├── main.tf                  # wires the 4 modules together
+│   ├── main.tf                  # wires 5 module blocks together (4 module sources — networking, iam, gke, artifact_registry — plus a second artifact_registry instantiation for prod, added in `790d472`)
 │   ├── providers.tf              # google provider + `backend "gcs" {}` (empty — configured via -backend-config flags); helm/kubernetes providers present but commented out
 │   ├── variables.tf
-│   ├── outputs.tf                # gke_cluster_name, registry_login_server, kubectl/argocd helper strings
+│   ├── outputs.tf                # gke_cluster_name, registry_login_server, prod_registry_login_server, kubectl/argocd helper strings
 │   ├── backend.hcl.example
 │   └── terraform.tfvars.example
 ├── modules/
 │   ├── networking/               # VPC + GKE subnet, no cross-module deps
 │   ├── iam/                      # per-env identities: GKE node SA + IAM bindings
-│   ├── artifact_registry/        # Docker repo, no cross-module deps
+│   ├── artifact_registry/        # Docker repo, no cross-module deps; instantiated twice (staging + prod registries)
 │   └── gke/                      # cluster + node pool; consumes networking + iam outputs
 ├── .github/workflows/
 │   └── workflow-infra.yml        # single workflow: Terraform lifecycle + ArgoCD bootstrap
@@ -52,6 +52,10 @@ cd backend-config
 cp terraform.tfvars.example terraform.tfvars   # edit: project_id, bucket_name, github_owner, github_infra_repo, github_app_repo
 terraform init
 terraform apply
+# Note: variables.tf requires github_owner/github_infra_repo/github_app_repo (no
+# defaults — used to scope each SA's WIF binding to its own repo), but the committed
+# terraform.tfvars.example only has project_id/region/bucket_name; add the three
+# GitHub-related lines yourself after copying, don't expect to find them to "edit".
 terraform output workload_identity_provider   # -> secret WORKLOAD_IDENTITY_PROVIDER
 terraform output terraform_ci_sa_email        # -> secret SERVICE_ACCOUNT_EMAIL
 terraform output github_actions_sa_email      # -> var GCP_SERVICE_ACCOUNT (repo-app repo)
@@ -93,24 +97,25 @@ kubectl get secret argocd-initial-admin-secret -n argocd -o jsonpath='{.data.pas
 
 ## Module dependency graph
 
-`environments/staging/main.tf` instantiates four modules. Only two edges are real Terraform dependencies (via `depends_on` or attribute references) — the module block order in the file does **not** imply a serial chain for all four:
+`environments/staging/main.tf` instantiates **five module blocks** (from four distinct module sources — `artifact_registry` is instantiated twice, once for staging and once for prod, since commit `790d472`). Only two edges are real Terraform dependencies (via `depends_on` or attribute references) — the module block order in the file does **not** imply a serial chain:
 
 ```
 modules/networking  ──┐
                        ├──> modules/gke  (depends_on = [networking, iam]; consumes
 modules/iam         ──┘                  vpc_name, gke_subnet_id, gke_nodes_sa_email)
 
-modules/artifact_registry   (fully independent — no inputs from/outputs to any other module)
+module.artifact_registry        (staging registry — fully independent, no inputs from/outputs to any other module)
+module.artifact_registry_prod   (prod registry — same module source, second instantiation; also fully independent)
 ```
 
 - **`networking`** — inputs `project_id`, `region`, `environment`; outputs `vpc_id`, `vpc_name`, `gke_subnet_id`. Creates `google_compute_network.main` (`vpc-<env>-pfe`, `auto_create_subnetworks = false`) and `google_compute_subnetwork.gke` (`subnet-gke-<env>`, default CIDR `10.0.1.0/24` via `gke_subnet_prefix`), with `private_ip_google_access = true` and VPC flow logs (`aggregation_interval = INTERVAL_5_SEC`, `flow_sampling = 0.5`, `metadata = INCLUDE_ALL_METADATA`).
 - **`iam`** — inputs `project_id`, `environment`, `terraform_ci_sa_email` (built inline in `main.tf` as `sa-terraform-ci@${var.project_id}.iam.gserviceaccount.com`, **not** passed as a module output — `backend-config` and `environments/staging` are separate states with no remote-state data source between them), `developer_group_email` (nullable, default `null`, undocumented in the root CLAUDE.md — when set, grants a Google group `roles/container.clusterViewer`; leave `null` outside staging). Creates `sa-gke-<env>-pfe` with 5 roles (`artifactregistry.reader`, `logging.logWriter`, `monitoring.metricWriter`, `monitoring.viewer`, `stackdriver.resourceMetadata.writer`), then grants `sa-terraform-ci` `roles/iam.serviceAccountUser` scoped to *only* that SA and to the project's Compute Engine default SA (GKE bootstrap references the default SA even with `remove_default_node_pool = true`). Outputs `gke_nodes_sa_email`, `gke_nodes_sa_name`.
-- **`artifact_registry`** — inputs `acr_name`, `project_id`, `region`, `environment`; creates one `google_artifact_registry_repository` (format `DOCKER`); outputs `acr_login_server` = `"${region}-docker.pkg.dev/${project_id}/${acr_name}"` (this is the exact string `repo-app`'s CI builds image references from).
+- **`artifact_registry`** — inputs `acr_name`, `project_id`, `region`, `environment`; creates one `google_artifact_registry_repository` (format `DOCKER`); outputs `acr_login_server` = `"${region}-docker.pkg.dev/${project_id}/${acr_name}"` (this is the exact string `repo-app`'s CI builds image references from). The root module wires it up **twice**: `module.artifact_registry` (`acr_name = var.registry_name`, `environment = "staging"`) for the normal dev/staging build path, and `module.artifact_registry_prod` (`acr_name = var.prod_registry_name`, default `"registry-prod-pfe"`, `environment = "prod"`) — a registry only ever written to by `promote-prod.yml`'s `crane copy` step, never by regular CI builds. `environments/staging/outputs.tf` exposes both as `registry_login_server` and `prod_registry_login_server`. Neither the `apply` nor `destroy` job's runtime-generated `terraform.tfvars` sets `prod_registry_name`, so it always resolves to its `"registry-prod-pfe"` default — there is no `GAR_PROD_REPOSITORY`-style GitHub var feeding this Terraform root (that var, if present, is consumed on `repo-app`'s side, not here).
 - **`gke`** — see hardening detail below. Inputs include `vpc_name`/`gke_subnet_id` from `networking` and `gke_nodes_sa_email` from `iam`; `depends_on = [module.networking, module.iam]` is set explicitly in `main.tf` even though the attribute references would already force ordering — belt-and-suspenders.
 
 ## GKE cluster hardening (`modules/gke/main.tf`)
 
-Zonal cluster in `${var.region}-b` (`europe-west1-b`). The default node pool is removed (`remove_default_node_pool = true`) and replaced by a custom pool that is **also named `default`** (`google_container_node_pool.default`) — don't confuse "the default node pool GCP creates" (removed) with "the node pool resource named `default`" (the one actually running workloads).
+Zonal cluster in `${var.region}-b` (`europe-west1-b`). The default node pool is removed (`remove_default_node_pool = true`) and replaced by a custom pool that is **also named `default`** (`google_container_node_pool.default`) — don't confuse "the default node pool GCP creates" (removed) with "the node pool resource named `default`" (the one actually running workloads). The cluster also sets `enable_intranode_visibility = true` (not tied to a code-commented Checkov ID, but present in the resource) and `networking_mode = "VPC_NATIVE"` with an empty `ip_allocation_policy {}` block (GKE auto-assigns secondary ranges).
 
 Settings, each tagged with the Checkov check ID it satisfies where the code comments one:
 - `master_auth.client_certificate_config.issue_client_certificate = false` (CKV_GCP_13) — no client-cert auth, WIF/OIDC only.
@@ -123,29 +128,28 @@ Settings, each tagged with the Checkov check ID it satisfies where the code comm
 - Node pool: `autoscaling { min_node_count = var.node_count, max_node_count = var.max_node_count }` (added in commit `17caae4`, replacing a flat `node_count`), `management { auto_upgrade = true, auto_repair = true }`, `spot = true` (toggled off then back on in commits `4898848`/`dfdf312` while diagnosing a CPU-allocatable problem — kept enabled for staging cost savings, at the cost of preemption risk).
 - `release_channel` is validated in `modules/gke/variables.tf` to be `REGULAR` or `STABLE` only (case-insensitive, uppercased); `disk_size_gb` is validated `> 0`. Both are `variables.tf`-level `validation` blocks unique to this module (not present on the `environments/staging` passthrough variables).
 
-Defaults if `terraform.tfvars` omits a value: `node_count=1`, `max_node_count=3`, `node_vm_size="e2-standard-2"`, `disk_size_gb=30`, `release_channel="REGULAR"`, `gke_subnet_prefix="10.0.1.0/24"` (networking module).
+Defaults if `terraform.tfvars` omits a value: `node_count=1`, `max_node_count=3`, `node_vm_size="e2-standard-2"`, `disk_size_gb=30`, `release_channel="REGULAR"`, `gke_subnet_prefix="10.0.1.0/24"` (networking module), `prod_registry_name="registry-prod-pfe"` (`environments/staging/variables.tf`, feeds `module.artifact_registry_prod`).
 
 ## Workflow: `.github/workflows/workflow-infra.yml`
 
-Triggers: push/PR to `main` on paths `environments/**`, `modules/**`, `backend-config/**`, the workflow file itself, `.checkov.yaml`; daily `schedule` (`30 13 * * *` = 13:30 UTC); `workflow_dispatch` with `action` = `plan | apply | destroy-staging | drift | bootstrap | unlock`. `concurrency` group is `terraform-infra-${{ github.ref }}` with `cancel-in-progress: false` — a second push while one run is in flight queues rather than cancels it.
+Triggers: push/PR to `main` on paths `environments/**`, `modules/**`, `backend-config/**`, the workflow file itself, `.checkov.yaml`; daily `schedule` (`30 13 * * *` = 13:30 UTC); `workflow_dispatch` with `action` = `plan | apply | destroy-staging | bootstrap` (the `workflow_dispatch.inputs.action` description comment and its `options:` list still show an older `plan | apply | destroy-staging | drift | bootstrap | unlock` — that line is commented out/stale, the live `options:` array no longer includes `drift` or `unlock`). `concurrency` group is `terraform-infra-${{ github.ref }}` with `cancel-in-progress: false` — a second push while one run is in flight queues rather than cancels it.
 
-Job graph:
+**There is no `detect-drift` job and no working `unlock` job anymore.** Commit `fa8b32c` ("fix:delete drift") deleted the entire `detect-drift` job (107 lines removed) rather than disabling it, and commits `5413dea`/`db7d786` ("delete unlock"/"deleted unlock") commented out the whole `unlock` job block — its YAML is still physically present at the bottom of the file but entirely inside `#` comments, so it does not run and doesn't even parse as a job. One consequence: the daily 13:30 UTC `schedule` trigger now still fires `validate`→`lint`+`security`→`plan` (nothing in `plan`'s `if:` excludes `schedule`), but since `apply`'s `if:` only allows `push` or `workflow_dispatch(action=apply)`, a scheduled run can never apply, and since `detect-drift` no longer exists, a scheduled run that finds drift (`plan` exit code 2) no longer opens a GitHub issue or does anything else observable beyond the job log — the schedule trigger is effectively now just a periodic plan-only health check with no drift-issue side effect.
+
+Job graph (current):
 ```
 validate (fmt -check -recursive + validate, all 6 module dirs, ~30s)
    ├─> lint (tflint --recursive)         ─┐
    └─> security (checkov, console+SARIF)  ├─> plan ─> apply ─> bootstrap-argocd
                                           ─┘
-detect-drift   (independent — schedule, or dispatch action=drift)
 destroy        (independent — dispatch action=destroy-staging only, env staging-destroy)
-unlock         (independent — dispatch action=unlock only)
 ```
 
-- **`plan`** additionally guards `if:` against running on forked-PR heads (`github.event.pull_request.head.repo.fork == false`) and against `action == 'destroy-staging'`. It writes `terraform.tfvars` at runtime from GitHub `vars.*` (not from any committed file), runs `terraform plan -detailed-exitcode -out=tfplan.binary`, and on a stale-lock failure tries to read the lock ID out of `gs://<bucket>/staging/default.tflock` and `force-unlock` it. Exit code 2 (changes) uploads `tfplan.binary`/`tfplan.json`/`terraform.tfvars` as a 1-day artifact and posts a Create/Update/Destroy table as a PR comment.
+- **`plan`** additionally guards `if:` against running on forked-PR heads (`github.event.pull_request.head.repo.fork == false`) and against `action == 'destroy-staging'`. It writes `terraform.tfvars` at runtime from GitHub `vars.*` (not from any committed file, and without setting `prod_registry_name` — that var keeps its `"registry-prod-pfe"` default), runs `terraform plan -detailed-exitcode -out=tfplan.binary`, and on a stale-lock failure tries to read the lock ID out of `gs://<bucket>/staging/default.tflock` and `force-unlock` it. Exit code 2 (changes) uploads `tfplan.binary`/`tfplan.json`/`terraform.tfvars` as a 1-day artifact and posts a Create/Update/Destroy table as a PR comment.
 - **`apply`** needs `plan` to have exit code `2`, only runs on `push` or `workflow_dispatch(action=apply)` (never on `pull_request`), is gated by GitHub Environment `staging-apply`, downloads the exact `tfplan.binary` from `plan` and applies that binary (never re-plans) — this is what guarantees apply == what was reviewed. After apply it fetches GKE credentials and polls (`for i in 1..30`, 10s sleep) until `kubectl get nodes` returns at least one row before calling `kubectl wait --for=condition=Ready nodes --all --timeout=300s` — added in commit `a0572fe` because `kubectl wait --all` errors out with "no matching resources found" on a zero-node set, which spot VMs + autoscaling make transiently likely right after apply.
-- **`bootstrap-argocd`** runs `if: always() && needs.apply.result != 'failure' && needs.plan.result != 'failure'` and not on PRs/destroy — so it still runs when `apply` was skipped because `plan` found no changes (exit code 0). It checks `kubectl get namespace argocd` + `kubectl get application root-app -n argocd`; if both exist and `action != 'bootstrap'` it skips the install (~5s no-op), otherwise `helm upgrade --install argocd argo/argo-cd --version 6.7.3 --namespace argocd --set server.service.type=ClusterIP --wait --timeout 600s`, waits for the `applications.argoproj.io` CRD and the `argocd-server` pod, checks out `vars.GITOPS_REPO` into `repo-config/`, and `kubectl apply -f repo-config/apps/root-app.yaml`.
-- **`detect-drift`** — `terraform plan -refresh-only -detailed-exitcode`; on exit 2 opens a GitHub issue labeled `terraform-drift` with the plan log (truncated to 3000 chars), deduped against any already-open issue with that label.
+- **`bootstrap-argocd`** `needs: [plan, apply]`, runs `if: always() && needs.apply.result != 'failure' && needs.plan.result != 'failure' && github.event_name != 'pull_request' && (github.event_name != 'workflow_dispatch' || inputs.action != 'destroy-staging')` — so it still runs when `apply` was skipped because `plan` found no changes (exit code 0), but not on PRs or a `destroy-staging` dispatch. It checks `kubectl get namespace argocd` + `kubectl get application root-app -n argocd`; if both exist and `action != 'bootstrap'` it skips the install (~5s no-op), otherwise creates the `argocd` namespace, `helm repo add argo ... --force-update`, `helm upgrade --install argocd argo/argo-cd --version 6.7.3 --namespace argocd --set server.service.type=ClusterIP --wait --timeout 600s`, waits for the `applications.argoproj.io` CRD and the `argocd-server` pod, checks out `vars.GITOPS_REPO` into `repo-config/`, and `kubectl apply -f repo-config/apps/root-app.yaml`.
 - **`destroy`** — `workflow_dispatch(action=destroy-staging)` only, gated by Environment `staging-destroy`. Strips finalizers from every ArgoCD `Application` (`kubectl patch ... -p '{"metadata":{"finalizers":null}}'`), deletes them, `helm uninstall argocd`, force-deletes the three ArgoCD CRDs and the `argocd` namespace, *then* `terraform destroy -auto-approve`.
-- **`unlock`** — reads `staging/default.tflock` from GCS and `terraform force-unlock -force <id>`; a manual escape hatch (`plan`/`apply` also self-heal locks on failure via the same pattern).
+- **No standalone `unlock` job runs anymore** (see above — its block is fully commented out). The escape hatch that remains live is the "Release lock on failure" step inline in both `plan` and `apply`: on failure they read `staging/default.tflock` from GCS and `terraform force-unlock -force <id>`. If that self-heal step itself fails to clear a lock, there is currently no dispatchable job to fall back on short of uncommenting the `unlock` block or running `terraform force-unlock` manually.
 
 Env pinned versions: `TF_VERSION=1.7.5`, `ARGOCD_CHART_VERSION=6.7.3` (`argo/argo-cd` Helm chart), tflint `v0.50.3` (action) vs `.tflint.hcl`'s `google` ruleset plugin `0.27.1` — two different version axes, don't conflate them.
 
@@ -181,3 +185,5 @@ One WIF pool (`github-pool-v2`) and provider (`github-provider`, OIDC issuer `ht
 - **Two Checkov check IDs (`CKV_GCP_25`, `CKV_GCP_65`) each cover two unrelated findings** in this codebase (an inline code comment vs. a separate `.checkov.yaml` skip reason) — verify against actual `checkov` output before assuming a skip means a control is off.
 - **Locally-present `terraform.tfvars`/`backend.hcl`/`terraform.tfstate*` files are gitignored, not canonical** — their values (e.g. `node_vm_size = e2-standard-4`, bucket `tfstate-pfe-2026-495220`) may not match the GitHub `vars.*` actually driving CI; check GitHub repo variables for ground truth on live values.
 - **`README.md` references an `environments/staging/moved.tf`** ("blocs `moved` — migration state IAM") that does not exist in the current tree — either already deleted post-migration or the README is stale on this point; don't go looking for it.
+- **`environments/staging` now provisions 5 module blocks, not 4** — commit `790d472` added `module.artifact_registry_prod` (same `modules/artifact_registry` source, `acr_name = var.prod_registry_name`, default `"registry-prod-pfe"`, `environment = "prod"`), fully independent of the other four. It exists purely as the destination of `promote-prod.yml`'s `crane copy`; nothing in this repo's Terraform or `workflow-infra.yml` writes to it or reads `GAR_PROD_REPOSITORY` — that variable, if it exists, is consumed on `repo-app`'s side.
+- **`detect-drift` no longer exists and `unlock` no longer runs** — `fa8b32c` deleted the `detect-drift` job outright (not disabled, gone), and `5413dea`/`db7d786` fully commented out the `unlock` job block. The `workflow_dispatch.action` choices are now only `plan | apply | destroy-staging | bootstrap` (the `drift`/`unlock` choices only remain as a stale, commented-out description line). The daily 13:30 UTC `schedule` trigger still fires but now only exercises `validate`→`lint`/`security`→`plan`; it can never reach `apply` (push/dispatch-only) and, with `detect-drift` gone, a scheduled `plan` that finds drift no longer opens a `terraform-drift` issue or does anything beyond logging. If you need drift alerting or a manual lock-release dispatch back, both must be re-added — don't assume either still works because the schedule/lock-release code paths *look* intact elsewhere.

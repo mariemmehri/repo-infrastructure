@@ -21,3 +21,11 @@ output "argocd_portforward" {
 output "argocd_password" {
   value = "kubectl get secret argocd-initial-admin-secret -n argocd -o jsonpath='{.data.password}' | base64 -d"
 }
+
+output "cnpg_backup_bucket_name" {
+  value = module.cnpg_backup.backup_bucket_name
+}
+
+output "cnpg_backup_sa_email" {
+  value = module.cnpg_backup.cnpg_backup_sa_email
+}
