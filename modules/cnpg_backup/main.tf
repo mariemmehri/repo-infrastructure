@@ -43,6 +43,17 @@ resource "google_storage_bucket_iam_member" "cnpg_backup_writer" {
   member = "serviceAccount:${google_service_account.cnpg_backup.email}"
 }
 
+# roles/storage.objectAdmin alone does NOT include storage.buckets.get —
+# barman-cloud's preflight check ("barman-cloud-check-wal-archive") calls the
+# bucket metadata GET before archiving/backing up, and fails every backup
+# with a 403 without this. Still scoped to this bucket only, not
+# roles/storage.admin (which would also grant bucket delete / IAM changes).
+resource "google_storage_bucket_iam_member" "cnpg_backup_bucket_reader" {
+  bucket = google_storage_bucket.cnpg_backup.name
+  role   = "roles/storage.legacyBucketReader"
+  member = "serviceAccount:${google_service_account.cnpg_backup.email}"
+}
+
 # GKE Workload Identity binding: lets the Kubernetes ServiceAccount
 # (annotated iam.gke.io/gcp-service-account in repo-config) impersonate
 # this GSA — no downloaded JSON key involved.
