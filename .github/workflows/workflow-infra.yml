@@ -19,8 +19,8 @@ on:
       - ".github/workflows/workflow-infra.yml"
       - ".checkov.yaml"
 
-  schedule:
-    - cron: "30 13 * * *"
+  # schedule:
+  #   - cron: "30 13 * * *"
 
   workflow_dispatch:
     inputs:
