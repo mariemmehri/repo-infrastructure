@@ -577,6 +577,35 @@ jobs:
             -backend-config="prefix=staging" \
             -reconfigure -input=false -no-color
 
+      - name: Strip CNPG Cluster finalizers before ArgoCD cleanup
+        run: |
+          # NOUVEAU : forcer aussi le finalizer CNPG, pas seulement celui d'ArgoCD.
+          # Le CR Cluster (postgresql.cnpg.io) porte son PROPRE finalizer, posé
+          # et retiré par l'opérateur CNPG lui-même - distinct du finalizer
+          # resources-finalizer.argocd.argoproj.io de l'Application ArgoCD
+          # "cnpg-cluster-staging" qui l'enveloppe. Stripper seulement le
+          # finalizer de l'Application (étape suivante) ne suffit pas : si
+          # l'Application "cnpg-operator" (qui fait tourner le pod opérateur)
+          # est supprimée avant que le finalizer du Cluster ait été retiré,
+          # plus aucun opérateur n'est vivant pour le traiter - le Cluster
+          # reste bloqué en Terminating indéfiniment. C'est exactement ce qui
+          # a produit "error: timed out waiting for the condition on
+          # applications/cnpg-cluster-staging" alors que les 7 autres
+          # Applications se supprimaient sans problème. On strippe donc ce
+          # finalizer ici, avant toute suppression d'Application.
+          if kubectl get crd clusters.postgresql.cnpg.io &>/dev/null; then
+            echo "Removing finalizers from all CNPG Cluster resources..."
+            kubectl get clusters.postgresql.cnpg.io --all-namespaces --no-headers 2>/dev/null \
+              | awk '{print $1, $2}' \
+              | while read -r ns name; do
+                  [ -z "$name" ] && continue
+                  kubectl patch clusters.postgresql.cnpg.io "$name" -n "$ns" \
+                    -p '{"metadata":{"finalizers":null}}' --type=merge 2>/dev/null || true
+                done
+            kubectl delete clusters.postgresql.cnpg.io --all --all-namespaces --timeout=30s --ignore-not-found || true
+            echo "CNPG Cluster resources cleared"
+          fi
+
       - name: Graceful ArgoCD cleanup before cluster destruction
         run: |
           if kubectl get namespace argocd &>/dev/null; then
