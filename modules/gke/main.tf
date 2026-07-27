@@ -59,11 +59,18 @@ resource "google_container_cluster" "gke" {
     }
   }
 
-  # CKV_GCP_65 — enforce Kubernetes NetworkPolicy via Calico
-  network_policy {
-    enabled  = true
-    provider = "CALICO"
-  }
+  # Dataplane V2 (Cilium/eBPF) replaces the legacy Calico network_policy addon —
+  # NetworkPolicy enforcement is now built into the dataplane itself. This is
+  # NOT compatible with also setting network_policy{enabled=true, provider=CALICO}
+  # (mutually exclusive at the GKE API level). Chosen specifically because
+  # Calico/iptables cannot enforce an egress NetworkPolicy against a Service
+  # ClusterIP (only against pod IPs, pre-DNAT) — see repo-config's
+  # docs/issues-rencontrees.md Issue 4. This was prepared once before and
+  # reverted only because it required a full cluster recreate; not a blocker
+  # when this change ships alongside another recreate anyway. See CKV_GCP_12
+  # skip in .checkov.yaml — Checkov's check only recognizes the legacy Calico
+  # block, not Dataplane V2's built-in enforcement.
+  datapath_provider = "ADVANCED_DATAPATH"
 
   # CKV_GCP_66 — enforce project-level Binary Authorization policy
   binary_authorization {
