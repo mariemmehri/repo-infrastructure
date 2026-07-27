@@ -98,8 +98,8 @@ resource "google_container_node_pool" "default" {
   location       = "${var.region}-b"
   node_locations = ["${var.region}-b"]
   project        = var.project_id
-  
-  initial_node_count = var.node_count   # ← ICI, à ajouter
+
+  initial_node_count = var.node_count # ← ICI, à ajouter
 
   autoscaling {
     min_node_count = var.node_count
