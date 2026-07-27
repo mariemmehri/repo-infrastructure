@@ -20,6 +20,12 @@ resource "google_storage_bucket" "cnpg_backup" {
   uniform_bucket_level_access = true
   public_access_prevention    = "enforced"
 
+
+  lifecycle {
+    prevent_destroy = true
+  }
+
+
   labels = {
     purpose     = "cnpg-postgres-backups"
     environment = var.environment
