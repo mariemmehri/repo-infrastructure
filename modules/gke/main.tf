@@ -30,6 +30,7 @@ resource "google_container_cluster" "gke" {
 
 
   node_config {
+    spot = true
     workload_metadata_config {
       mode = "GKE_METADATA"
     }
