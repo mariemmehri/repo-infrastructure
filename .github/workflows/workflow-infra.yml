@@ -196,6 +196,8 @@ jobs:
           max_node_count = ${{ vars.MAX_NODE_COUNT }}
           node_vm_size   = "${{ vars.NODE_VM_SIZE }}"
           cnpg_backup_bucket_name = "${{ vars.CNPG_BACKUP_BUCKET_NAME }}"
+          cnpg_backup_bucket_name_dev  = "${{ vars.CNPG_BACKUP_BUCKET_NAME_DEV }}"
+          cnpg_backup_bucket_name_prod = "${{ vars.CNPG_BACKUP_BUCKET_NAME_PROD }}"
           EOF
 
       - name: Terraform Init
@@ -568,6 +570,8 @@ jobs:
           max_node_count = ${{ vars.MAX_NODE_COUNT }}
           node_vm_size   = "${{ vars.NODE_VM_SIZE }}"
           cnpg_backup_bucket_name = "${{ vars.CNPG_BACKUP_BUCKET_NAME }}"
+          cnpg_backup_bucket_name_dev  = "${{ vars.CNPG_BACKUP_BUCKET_NAME_DEV }}"
+          cnpg_backup_bucket_name_prod = "${{ vars.CNPG_BACKUP_BUCKET_NAME_PROD }}"
           EOF
       - name: Terraform Init
         working-directory: ${{ env.TF_STAGING_DIR }}

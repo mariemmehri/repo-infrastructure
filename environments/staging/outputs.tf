@@ -29,3 +29,19 @@ output "cnpg_backup_bucket_name" {
 output "cnpg_backup_sa_email" {
   value = module.cnpg_backup.cnpg_backup_sa_email
 }
+
+output "cnpg_backup_bucket_name_dev" {
+  value = module.cnpg_backup_dev.backup_bucket_name
+}
+
+output "cnpg_backup_sa_email_dev" {
+  value = module.cnpg_backup_dev.cnpg_backup_sa_email
+}
+
+output "cnpg_backup_bucket_name_prod" {
+  value = module.cnpg_backup_prod.backup_bucket_name
+}
+
+output "cnpg_backup_sa_email_prod" {
+  value = module.cnpg_backup_prod.cnpg_backup_sa_email
+}

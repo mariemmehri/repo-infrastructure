@@ -60,3 +60,26 @@ module "cnpg_backup" {
   ksa_namespace      = var.cnpg_ksa_namespace
   ksa_name           = var.cnpg_ksa_name
 }
+
+# Same module, one instantiation per environment — mirrors the
+# artifact_registry / artifact_registry_prod pattern above. Each env gets its
+# own bucket + dedicated GSA + WIF binding scoped to its own namespace/KSA.
+module "cnpg_backup_dev" {
+  source             = "../../modules/cnpg_backup"
+  project_id         = var.project_id
+  environment        = "dev"
+  region             = var.region
+  backup_bucket_name = var.cnpg_backup_bucket_name_dev
+  ksa_namespace      = "dev"
+  ksa_name           = "pg-dev"
+}
+
+module "cnpg_backup_prod" {
+  source             = "../../modules/cnpg_backup"
+  project_id         = var.project_id
+  environment        = "prod"
+  region             = var.region
+  backup_bucket_name = var.cnpg_backup_bucket_name_prod
+  ksa_namespace      = "prod"
+  ksa_name           = "pg-prod"
+}

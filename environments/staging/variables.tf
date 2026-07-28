@@ -77,3 +77,13 @@ variable "cnpg_ksa_name" {
   type        = string
   default     = "pg-staging"
 }
+
+variable "cnpg_backup_bucket_name_dev" {
+  description = "Globally-unique GCS bucket name for the dev CNPG cluster's barman-cloud WAL/base backups"
+  type        = string
+}
+
+variable "cnpg_backup_bucket_name_prod" {
+  description = "Globally-unique GCS bucket name for the prod CNPG cluster's barman-cloud WAL/base backups"
+  type        = string
+}
