@@ -11,3 +11,7 @@ registry_name = "registry-staging-pfe"
 
 # CNPG backup destination (must be a globally-unique GCS bucket name)
 cnpg_backup_bucket_name = "cnpg-backup-staging-pfe-***-**"
+
+# CNPG backup destinations for dev/prod (one CNPG Cluster per environment)
+cnpg_backup_bucket_name_dev  = "cnpg-backup-dev-pfe-***-**"
+cnpg_backup_bucket_name_prod = "cnpg-backup-prod-pfe-***-**"
