@@ -45,3 +45,7 @@ output "cnpg_backup_bucket_name_prod" {
 output "cnpg_backup_sa_email_prod" {
   value = module.cnpg_backup_prod.cnpg_backup_sa_email
 }
+
+output "ingress_ips" {
+  value = { for env, addr in google_compute_global_address.ingress_ip : env => addr.address }
+}
