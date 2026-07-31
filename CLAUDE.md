@@ -39,9 +39,12 @@ repo-infrastructure/
 │   └── cnpg_backup/              # CNPG barman-cloud backup bucket + dedicated GSA; instantiated 3x (staging/dev/prod), no cross-module deps
 ├── .github/workflows/
 │   └── workflow-infra.yml        # single workflow: Terraform lifecycle + ArgoCD bootstrap
+├── docs/
+│   └── backup-restore-drill-report.md   # CNPG restore-drill report template (see dedicated section below)
 ├── scripts/
-│   └── test-backup-restore.sh    # CNPG backup/restore verification for pg-staging; read-only health-check by default, --full-restore-test opt-in (mutates IAM + spins up a throwaway cluster)
+│   └── cnpg-restore-single-row.sh       # manual CNPG backup/restore validation tool, not run by any workflow
 ├── .checkov.yaml                 # severity gating + documented skip list
+├── .gitattributes                 # `*.sh text eol=lf` — keeps scripts/*.sh LF-terminated on a Windows checkout
 └── .tflint.hcl                   # google ruleset plugin + a few core rules
 ```
 
@@ -98,14 +101,6 @@ gcloud container clusters get-credentials gke-staging-pfe --region europe-west1-
 kubectl port-forward svc/argocd-server -n argocd 9089:80
 kubectl get secret argocd-initial-admin-secret -n argocd -o jsonpath='{.data.password}' | base64 -d
 ```
-
-### CNPG backup/restore verification (`scripts/test-backup-restore.sh`)
-Added `6b77c38`. Hardcodes `pg-staging`/`gke-staging-pfe`/`staging` — not parameterized per-environment beyond the `--project`/`--namespace` flags.
-```bash
-./scripts/test-backup-restore.sh                    # read-only: Cluster health, last backup, WAL archiving, bucket reachability — no mutation
-./scripts/test-backup-restore.sh --full-restore-test # opt-in: seeds a canary row, backs up, restores into a throwaway second Cluster, verifies, tears down
-```
-`--full-restore-test` mutates IAM (a temporary Workload Identity binding) and creates real cluster resources for its duration; requires `roles/iam.serviceAccountAdmin` scoped to `sa-cnpg-staging-backup@<project>.iam.gserviceaccount.com`, which a regular user account does not get by default.
 
 ## Module dependency graph
 
@@ -182,6 +177,13 @@ One WIF pool (`github-pool-v2`) and provider (`github-provider`, OIDC issuer `ht
 - `sa-terraform-ci` project roles: `container.admin`, `compute.networkAdmin`, `artifactregistry.admin`, `storage.admin`, `iam.serviceAccountAdmin`, `resourcemanager.projectIamAdmin`. Notably **not** granted `iam.serviceAccountUser` at project scope here — that's deliberately added narrowly by `modules/iam` per environment (on the env's GKE node SA and the Compute Engine default SA only), which is what `CKV_GCP_49`'s skip comment is flagging as an open item (the broad admin roles above still trip other checks).
 - `sa-github-actions` project roles: `artifactregistry.writer`, `container.developer`, `storage.objectViewer`. (Root CLAUDE.md's app-CI section describes this SA's usage from `repo-app`'s side.)
 - APIs enabled here as a side effect: `iamcredentials.googleapis.com`, `sts.googleapis.com`, `artifactregistry.googleapis.com` (all `disable_on_destroy = false`).
+
+## Backup/restore drill (`scripts/`, `docs/`)
+
+Manual, out-of-band operational tooling that validates the CNPG backup path provisioned by `modules/cnpg_backup` — not invoked by `workflow-infra.yml` or any other CI job, and not gated by Terraform in any way.
+
+- **`scripts/cnpg-restore-single-row.sh`** — proves a single accidentally-deleted row in `pg-dev` (namespace `dev`) is recoverable from its GCS backup bucket (`cnpg-backup-dev-pfe-2026-495220`) *without* touching the live `pg-dev` `Cluster` CR, so ArgoCD's `selfHeal` on the `cnpg-cluster-dev` Application is never fought. Mechanism: on-demand CNPG `Backup` CR (barman-cloud CNPG-I plugin) → restore into a throwaway second `Cluster` via `bootstrap.recovery` → extract the target row from the restored copy → reinsert it into live `pg-dev` → verify → tear the throwaway cluster down. Hardcoded to `pg-dev`/namespace `dev` only (no staging/prod support — table default `employees`, row default `id = 1`, both overridable via `--table`/`--where`). Two modes: no flags = `--dry-run` (never deletes the real row — only proves the recovery path end-to-end; rehearse with this first), `--live` (actually deletes the row from `pg-dev` and reinserts it from the restored copy — the real drill). Requires `kubectl`, `gcloud`, `jq`, and the calling identity needs `roles/iam.serviceAccountAdmin` scoped to `sa-cnpg-dev-backup@<project>.iam.gserviceaccount.com` (to grant the throwaway cluster's Workload Identity binding).
+- **`docs/backup-restore-drill-report.md`** — the report template a `--live` run is meant to fill in (RTO/RPO, before/after row dumps, app-level proof via `GET /api/db-health` on `hr-dev`, a cleanup checklist for the throwaway cluster/ObjectStore/NetworkPolicy/WI binding). As of this writing it's still unfilled ("_à remplir_" placeholders throughout) — no real drill run has been recorded yet, so don't cite it as evidence the recovery path has been proven end-to-end. Documented limits: only covers a single-row delete, not full-`Cluster` loss, PITR without an on-demand backup available, or a GKE-cluster-wide loss; `pg-dev` is single-instance so the drill doesn't exercise HA failover (only `pg-prod`, 3 instances, would).
 
 ## Terraform state specifics
 
