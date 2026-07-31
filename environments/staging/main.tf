@@ -88,7 +88,7 @@ module "cnpg_backup_prod" {
 # namespaces on this one cluster) — reserved so the address survives Ingress
 # recreation instead of GKE assigning a new ephemeral one each time.
 resource "google_compute_global_address" "ingress_ip" {
-  for_each = toset(["dev", "staging", "prod"])
+  for_each = toset(["staging", "prod"])
   name     = "ip-hr-${each.key}"
   project  = var.project_id
 }
