@@ -86,7 +86,7 @@ module "cnpg_backup_prod" {
 
 
 resource "google_compute_global_address" "ingress_ip" {
-  for_each = toset(["dev","staging", "prod"])
+  for_each = toset(["dev", "staging", "prod"])
   name     = "ip-hr-${each.key}"
   project  = var.project_id
 }
